@@ -16,6 +16,11 @@ create table if not exists expenses (
   created_at timestamptz not null default now()
 );
 
+-- Splitting an expense between the two of you (added later; safe to run again)
+alter table expenses add column if not exists split boolean not null default false;
+alter table expenses add column if not exists share_p0 numeric;
+alter table expenses add column if not exists share_p1 numeric;
+
 alter table expenses enable row level security;
 
 drop policy if exists "authenticated users full access" on expenses;

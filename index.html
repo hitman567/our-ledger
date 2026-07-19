@@ -139,6 +139,8 @@
       <div class="sub" id="headMonth"></div>
       <div class="total" id="headTotal"></div>
       <div class="splitwrap" id="headSplit"></div>
+      <div class="gap" style="height:10px"></div>
+      <div class="splitwrap" id="headBalance"></div>
     </div>
   </header>
 
@@ -164,6 +166,16 @@
         <div id="cardWrap" class="hidden" style="margin-top:14px">
           <div class="label">Which card</div>
           <input class="input" id="fCard" placeholder="e.g. HDFC Millennia, SBI Cashback" />
+        </div>
+        <div style="margin-top:16px">
+          <div class="label">Split this expense?</div>
+          <div class="chiprow" id="fSplit"></div>
+          <div id="splitPreview" class="rowsub" style="margin-top:8px"></div>
+          <div id="customSplitWrap" class="hidden two" style="margin-top:12px">
+            <div><div class="label" id="fShare0Label"></div><input class="input" id="fShare0" inputmode="decimal" /></div>
+            <div><div class="label" id="fShare1Label"></div><input class="input" id="fShare1" inputmode="decimal" /></div>
+          </div>
+          <div id="splitErr" style="font-size:12.5px;color:var(--danger);margin-top:6px"></div>
         </div>
         <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
           <button class="toggle" id="fRecurring" aria-pressed="false"><span></span></button>
@@ -245,7 +257,7 @@ let expenses = [];         // all rows, newest first
 let editingId = null;
 let tab = "add";
 let openRow = null;
-let sel = { paidBy: 0, mode: "UPI", recurring: false };
+let sel = { paidBy: 0, mode: "UPI", recurring: false, split: false, splitMode: "no" };
 let histMonth = monthOf(todayStr()), histPerson = -1, histCat = "All";
 let insMonth = monthOf(todayStr());
 let auditRows = [];
@@ -305,6 +317,8 @@ async function saveExpense() {
   const amount = parseFloat($("fAmount").value);
   const description = $("fDesc").value.trim();
   if (!(amount > 0) || !description) return;
+  if (!splitValid()) return;
+  const [share_p0, share_p1] = splitShares();
   const rec = {
     amount, description,
     date: $("fDate").value || todayStr(),
@@ -314,6 +328,9 @@ async function saveExpense() {
     card: CARD_MODES.includes(sel.mode) ? $("fCard").value.trim() : "",
     recurring: sel.recurring,
     note: $("fNote").value.trim(),
+    split: sel.split,
+    share_p0: sel.split ? share_p0 : null,
+    share_p1: sel.split ? share_p1 : null,
   };
   $("saveBtn").disabled = true; $("saveBtn").textContent = "Saving…";
   const q = editingId
@@ -358,7 +375,26 @@ function buildStaticControls() {
     sel.recurring = !sel.recurring; paintChips();
   });
 
-  ["fAmount","fDesc"].forEach(id => $(id).addEventListener("input", validate));
+  $("fShare0Label").textContent = PEOPLE[0].name + "'s share";
+  $("fShare1Label").textContent = PEOPLE[1].name + "'s share";
+  $("fSplit").innerHTML =
+    `<button class="chip" data-split="no">Just me</button>` +
+    `<button class="chip" data-split="equal">Split equally</button>` +
+    `<button class="chip" data-split="custom">Custom split</button>`;
+  $("fSplit").addEventListener("click", e => {
+    const b = e.target.closest("[data-split]"); if (!b) return;
+    sel.splitMode = b.dataset.split;
+    sel.split = sel.splitMode !== "no";
+    if (sel.splitMode === "custom") {
+      const [s0,s1] = splitShares();
+      if (!$("fShare0").value) $("fShare0").value = s0 ? s0.toFixed(2) : "";
+      if (!$("fShare1").value) $("fShare1").value = s1 ? s1.toFixed(2) : "";
+    }
+    paintChips(); validate();
+  });
+  ["fShare0","fShare1"].forEach(id => $(id).addEventListener("input", () => { validate(); renderSplitPreview(); }));
+
+  ["fAmount","fDesc"].forEach(id => $(id).addEventListener("input", () => { validate(); renderSplitPreview(); }));
   $("saveBtn").addEventListener("click", saveExpense);
   $("cancelBtn").addEventListener("click", resetForm);
   $("syncBtn").addEventListener("click", fetchAll);
@@ -397,15 +433,19 @@ function paintChips() {
   $("cardWrap").classList.toggle("hidden", !CARD_MODES.includes(sel.mode));
   $("fRecurring").classList.toggle("on", sel.recurring);
   $("fRecurring").setAttribute("aria-pressed", sel.recurring);
+  $("fSplit").querySelectorAll(".chip").forEach(b => b.classList.toggle("on", b.dataset.split === sel.splitMode));
+  $("customSplitWrap").classList.toggle("hidden", sel.splitMode !== "custom");
+  renderSplitPreview();
 }
 function validate() {
-  $("saveBtn").disabled = !(parseFloat($("fAmount").value) > 0 && $("fDesc").value.trim());
+  $("saveBtn").disabled = !(parseFloat($("fAmount").value) > 0 && $("fDesc").value.trim() && splitValid());
 }
 function resetForm() {
   editingId = null;
   $("fAmount").value = ""; $("fDesc").value = ""; $("fNote").value = ""; $("fCard").value = "";
+  $("fShare0").value = ""; $("fShare1").value = "";
   $("fDate").value = todayStr(); $("fCat").value = CATEGORIES[0];
-  sel.mode = "UPI"; sel.recurring = false;
+  sel.mode = "UPI"; sel.recurring = false; sel.split = false; sel.splitMode = "no";
   $("saveBtn").textContent = "Add expense"; $("saveBtn").disabled = true;
   $("cancelBtn").classList.add("hidden");
   paintChips();
@@ -417,6 +457,15 @@ function startEdit(id) {
   $("fDate").value = x.date; $("fCat").value = x.category;
   sel.paidBy = Math.max(0, PEOPLE.findIndex(p => p.name === x.paid_by));
   sel.mode = x.mode; sel.recurring = !!x.recurring;
+  sel.split = !!x.split;
+  if (sel.split) {
+    const s0 = Number(x.share_p0) || 0, s1 = Number(x.share_p1) || 0;
+    const isEqual = Math.abs(s0 - s1) < 0.01 && Math.abs((s0 + s1) - Number(x.amount)) < 0.01;
+    sel.splitMode = isEqual ? "equal" : "custom";
+    $("fShare0").value = s0 ? s0.toFixed(2) : ""; $("fShare1").value = s1 ? s1.toFixed(2) : "";
+  } else {
+    sel.splitMode = "no"; $("fShare0").value = ""; $("fShare1").value = "";
+  }
   $("fCard").value = x.card || ""; $("fNote").value = x.note || "";
   $("saveBtn").textContent = "Save changes";
   $("cancelBtn").classList.remove("hidden");
@@ -442,6 +491,62 @@ function months() {
   return [...s].sort().reverse();
 }
 function personIdx(x) { const i = PEOPLE.findIndex(p => p.name === x.paid_by); return i < 0 ? 0 : i; }
+
+/* ---------------- splitting ---------------- */
+function computeBalance(rows) {
+  // positive => PEOPLE[1] owes PEOPLE[0]; negative => PEOPLE[0] owes PEOPLE[1]
+  let net = 0;
+  rows.forEach(x => {
+    if (!x.split) return;
+    const payer = personIdx(x);
+    const s0 = Number(x.share_p0) || 0, s1 = Number(x.share_p1) || 0;
+    net += payer === 0 ? s1 : -s0;
+  });
+  return net;
+}
+function balanceHTML(net) {
+  if (Math.abs(net) < 0.005) {
+    return `<div style="font-size:13.5px;text-align:center">You're all settled up</div>`;
+  }
+  const owes = net > 0 ? PEOPLE[1] : PEOPLE[0];
+  const owed = net > 0 ? PEOPLE[0] : PEOPLE[1];
+  return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px">
+    <span><b>${esc(owes.name)}</b> owes <b>${esc(owed.name)}</b></span>
+    <span class="mono" style="font-weight:700;font-size:16px">${CURRENCY}${fmt(Math.abs(net))}</span>
+  </div>`;
+}
+function splitLabel(x) {
+  if (!x.split) return "";
+  const payer = personIdx(x), other = 1 - payer;
+  const shares = [Number(x.share_p0) || 0, Number(x.share_p1) || 0];
+  const owed = shares[other];
+  if (owed <= 0) return "Split";
+  return `${esc(PEOPLE[other].name)} owes ${esc(PEOPLE[payer].name)} ${CURRENCY}${fmt(owed)}`;
+}
+function splitValid() {
+  if (!sel.split) return true;
+  if (sel.splitMode === "equal") return true;
+  const amt = parseFloat($("fAmount").value);
+  const s0 = parseFloat($("fShare0").value), s1 = parseFloat($("fShare1").value);
+  if (!(s0 >= 0) || !(s1 >= 0) || !(amt > 0)) return false;
+  return Math.abs((s0 + s1) - amt) < 0.01;
+}
+function splitShares() {
+  const amt = parseFloat($("fAmount").value) || 0;
+  if (sel.splitMode === "equal") { const h = amt / 2; return [h, h]; }
+  if (sel.splitMode === "custom") return [parseFloat($("fShare0").value) || 0, parseFloat($("fShare1").value) || 0];
+  return [null, null];
+}
+function renderSplitPreview() {
+  const amt = parseFloat($("fAmount").value) || 0;
+  if (sel.splitMode === "equal" && amt > 0) {
+    const h = amt / 2;
+    $("splitPreview").textContent = `${PEOPLE[0].name} ${CURRENCY}${fmt(h)} · ${PEOPLE[1].name} ${CURRENCY}${fmt(h)}`;
+  } else {
+    $("splitPreview").textContent = "";
+  }
+  $("splitErr").textContent = (sel.split && !splitValid() && sel.splitMode === "custom") ? "Shares must add up to the total amount." : "";
+}
 function splitBarHTML(byPerson) {
   const total = byPerson[0] + byPerson[1];
   const pct = total ? (byPerson[0] / total) * 100 : 50;
@@ -459,13 +564,14 @@ function rowHTML(x) {
     <div class="rowmain" data-row="${x.id}">
       <span class="rowbar" style="background:var(--p${i})"></span>
       <div style="flex:1;min-width:0">
-        <div class="rowdesc">${esc(x.description)} ${x.recurring ? "🔁" : ""}</div>
+        <div class="rowdesc">${esc(x.description)} ${x.recurring ? "🔁" : ""} ${x.split ? "⇄" : ""}</div>
         <div class="rowsub">${d} · ${esc(x.category)} · ${esc(x.paid_by)}</div>
       </div>
       <div class="rowamt">${CURRENCY}${fmt(x.amount)}</div>
     </div>
     ${open ? `<div class="rowdetail">
         <span>${esc(x.mode)}${x.card ? " · " + esc(x.card) : ""}</span>
+        ${x.split ? `<span>${splitLabel(x)}</span>` : ""}
         ${x.note ? `<span>“${esc(x.note)}”</span>` : ""}
         <span style="flex:1"></span>
         <button class="linkbtn" style="color:var(--green)" data-edit="${x.id}">Edit</button>
@@ -485,6 +591,7 @@ function renderHeader() {
   $("headMonth").textContent = monthLabel(tm) + " so far";
   $("headTotal").textContent = CURRENCY + fmt(total);
   $("headSplit").innerHTML = splitBarHTML(byP);
+  $("headBalance").innerHTML = balanceHTML(computeBalance(expenses));
 }
 
 function renderLists() {
@@ -535,6 +642,10 @@ function renderInsights() {
 
   $("insBody").innerHTML = `
     <div class="box">
+      <div class="label">Balance · all time</div>
+      ${balanceHTML(computeBalance(expenses))}
+    </div>
+    <div class="box">
       <div class="label">Total spent · ${monthLabel(insMonth)}</div>
       <div class="mono" style="font-size:34px;font-weight:700;margin-bottom:16px">${CURRENCY}${fmt(total)}</div>
       ${splitBarHTML(byP)}
@@ -574,7 +685,7 @@ function renderInsights() {
 }
 
 /* ---------------- audit log ---------------- */
-const FIELD_LABELS = { amount:"Amount", description:"Description", date:"Date", category:"Category", paid_by:"Paid by", mode:"Mode", card:"Card", recurring:"Recurring", note:"Note" };
+const FIELD_LABELS = { amount:"Amount", description:"Description", date:"Date", category:"Category", paid_by:"Paid by", mode:"Mode", card:"Card", recurring:"Recurring", note:"Note", split:"Split", share_p0:PEOPLE[0].name+"'s share", share_p1:PEOPLE[1].name+"'s share" };
 function nameFor(email) {
   const p = PEOPLE.find(p => p.email.toLowerCase() === String(email || "").toLowerCase());
   return p ? p.name : (email || "Unknown");
@@ -601,8 +712,8 @@ function renderAudit() {
       for (const f of Object.keys(FIELD_LABELS)) {
         let ov = o[f], nv = n[f];
         if (String(ov ?? "") !== String(nv ?? "")) {
-          if (f === "amount") { ov = CURRENCY + fmt(ov); nv = CURRENCY + fmt(nv); }
-          if (f === "recurring") { ov = ov ? "yes" : "no"; nv = nv ? "yes" : "no"; }
+          if (f === "amount" || f === "share_p0" || f === "share_p1") { ov = (ov == null ? ov : CURRENCY + fmt(ov)); nv = (nv == null ? nv : CURRENCY + fmt(nv)); }
+          if (f === "recurring" || f === "split") { ov = ov ? "yes" : "no"; nv = nv ? "yes" : "no"; }
           const show = v => (v === "" || v == null) ? "\u2014" : esc(v);
           changes.push(`${FIELD_LABELS[f]}: ${show(ov)} \u2192 ${show(nv)}`);
         }
@@ -625,10 +736,10 @@ function renderAll() { renderHeader(); renderLists(); renderInsights(); renderAu
 
 /* ---------------- csv export ---------------- */
 function exportCSV() {
-  const head = "date,description,amount,category,paid_by,mode,card,recurring,note";
+  const head = "date,description,amount,category,paid_by,mode,card,recurring,note,split,"+PEOPLE[0].name+"_share,"+PEOPLE[1].name+"_share";
   const rows = [...expenses].sort((a,b) => a.date.localeCompare(b.date)).map(x =>
-    [x.date, x.description, x.amount, x.category, x.paid_by, x.mode, x.card||"", x.recurring?"yes":"no", x.note||""]
-      .map(v => `"${String(v).replace(/"/g,'""')}"`).join(","));
+    [x.date, x.description, x.amount, x.category, x.paid_by, x.mode, x.card||"", x.recurring?"yes":"no", x.note||"", x.split?"yes":"no", x.share_p0 ?? "", x.share_p1 ?? ""]
+      .map(v => `"${String(v ?? "").replace(/"/g,'""')}"`).join(","));
   const blob = new Blob([[head, ...rows].join("\n")], { type:"text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
