@@ -97,6 +97,25 @@ select {
   gap: 8px;
   flex-wrap: wrap;
 }
+.chip.delchip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chip.delchip .x {
+  color: var(--danger);
+  font-weight: 800;
+}
+.smallbtn {
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .btn {
   width: 100%;
   padding: 14px;

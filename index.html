@@ -62,12 +62,35 @@
         <div class="label">Paid by</div>
         <div class="chiprow" id="fPaidBy"></div>
         <div class="gap"></div>
-        <div class="label">Payment mode</div>
+        <div class="label" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Payment mode</span>
+          <button type="button" class="linkbtn" id="modeManageBtn">Manage</button>
+        </div>
         <div class="chiprow" id="fMode"></div>
+        <div id="modeManagePanel" class="hidden" style="margin-top:10px">
+          <div class="chiprow" id="modeManageList"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+            <input class="input" id="newModeName" placeholder="New payment mode" style="flex:1" />
+            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;white-space:nowrap">
+              <input type="checkbox" id="newModeIsCard" /> Needs card name
+            </label>
+            <button type="button" class="smallbtn" id="addModeBtn">Add</button>
+          </div>
+        </div>
         <div id="cardWrap" class="hidden" style="margin-top:14px">
-          <div class="label">Which card</div>
+          <div class="label" style="display:flex;justify-content:space-between;align-items:center">
+            <span>Which card</span>
+            <button type="button" class="linkbtn" id="cardManageBtn">Manage</button>
+          </div>
           <input class="input" id="fCard" list="cardList" placeholder="e.g. HDFC Millennia, SBI Cashback" autocomplete="off" />
           <datalist id="cardList"></datalist>
+          <div id="cardManagePanel" class="hidden" style="margin-top:10px">
+            <div class="chiprow" id="cardManageList"></div>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <input class="input" id="newCardName" placeholder="New card name" style="flex:1" />
+              <button type="button" class="smallbtn" id="addCardBtn">Add</button>
+            </div>
+          </div>
         </div>
         <div style="margin-top:16px">
           <div class="label">Split this expense?</div>

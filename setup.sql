@@ -40,6 +40,77 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
+-- ============ CARDS ============
+-- User-managed list of card names (add/delete from the app). Matching is
+-- case-insensitive so "HDFC Swiggy" and "HDFC swiggy" can't both exist.
+
+create table if not exists cards (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists cards_name_lower_idx on cards (lower(name));
+
+alter table cards enable row level security;
+
+drop policy if exists "authenticated users full access" on cards;
+create policy "authenticated users full access"
+  on cards for all
+  to authenticated
+  using (true)
+  with check (true);
+
+do $$ begin
+  alter publication supabase_realtime add table cards;
+exception when duplicate_object then null;
+end $$;
+
+-- Pick up any card names already sitting in expenses (e.g. from before this
+-- table existed), deduped case-insensitively, keeping the earliest casing.
+insert into cards (name)
+select distinct on (lower(card)) card
+from expenses
+where card is not null and trim(card) <> ''
+order by lower(card), created_at asc
+on conflict (lower(name)) do nothing;
+
+-- ============ PAYMENT MODES ============
+-- User-managed list of payment methods. is_card marks methods that should
+-- prompt for a card name (Debit Card, Credit Card, ...).
+
+create table if not exists payment_modes (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  is_card boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists payment_modes_name_lower_idx on payment_modes (lower(name));
+
+alter table payment_modes enable row level security;
+
+drop policy if exists "authenticated users full access" on payment_modes;
+create policy "authenticated users full access"
+  on payment_modes for all
+  to authenticated
+  using (true)
+  with check (true);
+
+do $$ begin
+  alter publication supabase_realtime add table payment_modes;
+exception when duplicate_object then null;
+end $$;
+
+insert into payment_modes (name, is_card) values
+  ('Cash', false),
+  ('UPI', false),
+  ('Debit Card', true),
+  ('Credit Card', true),
+  ('Bank Transfer', false),
+  ('Other', false)
+on conflict (lower(name)) do nothing;
+
 -- ============ AUDIT LOG ============
 -- Every add, edit, and delete is recorded automatically by the
 -- database itself. The app can only READ this log, never change it.

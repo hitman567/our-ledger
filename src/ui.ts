@@ -1,19 +1,26 @@
-import { CARD_MODES, CATEGORIES, CURRENCY, FIELD_LABELS, MODES, PEOPLE } from "./config";
+import { CATEGORIES, CURRENCY, FIELD_LABELS, PEOPLE } from "./config";
 import { exportCSV } from "./csv";
 import { esc, fmt, monthLabel, monthOf, todayStr } from "./format";
 import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "./split";
 import {
+  deleteCard as dbDeleteCard,
   deleteExpense as dbDeleteExpense,
+  deletePaymentMode as dbDeletePaymentMode,
   fetchAuditLog,
+  fetchCards,
   fetchExpenses,
+  fetchPaymentModes,
+  insertCard as dbInsertCard,
   insertExpense,
+  insertPaymentMode as dbInsertPaymentMode,
   onAuthStateChange,
   signIn as dbSignIn,
   signOut as dbSignOut,
   subscribeToExpenseChanges,
+  subscribeToLookupChanges,
   updateExpense as dbUpdateExpense,
 } from "./supabaseClient";
-import type { AuditRow, Expense, ExpenseInput, FormSelection, SplitMode, Tab } from "./types";
+import type { AuditRow, Card, Expense, ExpenseInput, FormSelection, PaymentMode, SplitMode, Tab } from "./types";
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -22,6 +29,8 @@ function $<T extends HTMLElement = HTMLElement>(id: string): T {
 }
 
 let expenses: Expense[] = [];
+let cards: Card[] = [];
+let modes: PaymentMode[] = [];
 let editingId: string | null = null;
 let openRow: string | null = null;
 const sel: FormSelection = {
@@ -90,16 +99,41 @@ async function fetchAll(): Promise<void> {
   renderAll();
 }
 
+function isCardMode(name: string): boolean {
+  return modes.find((m) => m.name === name)?.is_card ?? false;
+}
+
+function normalizeCardName(name: string): string {
+  const trimmed = name.trim();
+  const existing = cards.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+  return existing ? existing.name : trimmed;
+}
+
+async function fetchLookups(): Promise<void> {
+  const [c, m] = await Promise.all([fetchCards(), fetchPaymentModes()]);
+  cards = c;
+  modes = m;
+  if (modes.length && !modes.some((x) => x.name === sel.mode)) sel.mode = modes[0]!.name;
+  renderModeChips();
+  renderCardOptions();
+  renderModeManageList();
+  renderCardManageList();
+  paintChips();
+}
+
 let booted = false;
 function boot(): void {
   if (booted) {
     void fetchAll();
+    void fetchLookups();
     return;
   }
   booted = true;
   buildStaticControls();
+  void fetchLookups();
   void fetchAll();
   subscribeToExpenseChanges(() => void fetchAll());
+  subscribeToLookupChanges(() => void fetchLookups());
 }
 
 function splitShares(): [number | null, number | null] {
@@ -128,6 +162,11 @@ async function saveExpense(): Promise<void> {
   const description = $<HTMLInputElement>("fDesc").value.trim();
   if (!(amount > 0) || !description || !splitValid()) return;
   const [share_p0, share_p1] = splitShares();
+  const isCard = isCardMode(sel.mode);
+  const cardName = isCard ? normalizeCardName($<HTMLInputElement>("fCard").value) : "";
+  if (isCard && cardName && !cards.some((c) => c.name.toLowerCase() === cardName.toLowerCase())) {
+    void dbInsertCard(cardName);
+  }
   const rec: ExpenseInput = {
     amount,
     description,
@@ -135,7 +174,7 @@ async function saveExpense(): Promise<void> {
     category: $<HTMLSelectElement>("fCat").value,
     paid_by: PEOPLE[sel.paidBy].name,
     mode: sel.mode,
-    card: CARD_MODES.includes(sel.mode) ? $<HTMLInputElement>("fCard").value.trim() : "",
+    card: cardName,
     recurring: sel.recurring,
     note: $<HTMLInputElement>("fNote").value.trim(),
     split: sel.split,
@@ -169,6 +208,64 @@ async function deleteExpenseFlow(id: string): Promise<void> {
   await fetchAll();
 }
 
+async function addMode(): Promise<void> {
+  const input = $<HTMLInputElement>("newModeName");
+  const name = input.value.trim();
+  if (!name) return;
+  if (modes.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
+    input.value = "";
+    return;
+  }
+  const isCard = $<HTMLInputElement>("newModeIsCard").checked;
+  const error = await dbInsertPaymentMode(name, isCard);
+  if (error) {
+    alert("Could not add: " + error);
+    return;
+  }
+  input.value = "";
+  $<HTMLInputElement>("newModeIsCard").checked = false;
+  await fetchLookups();
+}
+
+async function deleteModeFlow(id: string): Promise<void> {
+  const m = modes.find((x) => x.id === id);
+  if (!m || !confirm(`Delete payment mode "${m.name}"?`)) return;
+  const error = await dbDeletePaymentMode(id);
+  if (error) {
+    alert("Could not delete: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
+async function addCardFromManage(): Promise<void> {
+  const input = $<HTMLInputElement>("newCardName");
+  const name = input.value.trim();
+  if (!name) return;
+  if (cards.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    input.value = "";
+    return;
+  }
+  const error = await dbInsertCard(name);
+  if (error) {
+    alert("Could not add: " + error);
+    return;
+  }
+  input.value = "";
+  await fetchLookups();
+}
+
+async function deleteCardFlow(id: string): Promise<void> {
+  const c = cards.find((x) => x.id === id);
+  if (!c || !confirm(`Delete card "${c.name}"?`)) return;
+  const error = await dbDeleteCard(id);
+  if (error) {
+    alert("Could not delete: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
 /* ---------------- form ---------------- */
 function buildStaticControls(): void {
   $("curSym").textContent = CURRENCY;
@@ -186,12 +283,26 @@ function buildStaticControls(): void {
     paintChips();
   });
 
-  $("fMode").innerHTML = MODES.map((m) => `<button class="chip" data-m="${m}">${m}</button>`).join("");
   $("fMode").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLElement>("[data-m]");
     if (!b) return;
     sel.mode = b.dataset["m"]!;
     paintChips();
+  });
+  $("modeManageBtn").addEventListener("click", () => {
+    $("modeManagePanel").classList.toggle("hidden");
+  });
+  $("addModeBtn").addEventListener("click", () => void addMode());
+  $<HTMLInputElement>("newModeName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void addMode();
+  });
+
+  $("cardManageBtn").addEventListener("click", () => {
+    $("cardManagePanel").classList.toggle("hidden");
+  });
+  $("addCardBtn").addEventListener("click", () => void addCardFromManage());
+  $<HTMLInputElement>("newCardName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void addCardFromManage();
   });
 
   $("fRecurring").addEventListener("click", () => {
@@ -287,6 +398,16 @@ function buildStaticControls(): void {
       void deleteExpenseFlow(del.dataset["del"]!);
       return;
     }
+    const delMode = target.closest<HTMLElement>("[data-del-mode]");
+    if (delMode) {
+      void deleteModeFlow(delMode.dataset["delMode"]!);
+      return;
+    }
+    const delCard = target.closest<HTMLElement>("[data-del-card]");
+    if (delCard) {
+      void deleteCardFlow(delCard.dataset["delCard"]!);
+      return;
+    }
     const row = target.closest<HTMLElement>("[data-row]");
     if (row) {
       openRow = openRow === row.dataset["row"] ? null : (row.dataset["row"] ?? null);
@@ -305,7 +426,7 @@ function paintChips(): void {
   $("fMode")
     .querySelectorAll<HTMLElement>(".chip")
     .forEach((b) => b.classList.toggle("on", b.dataset["m"] === sel.mode));
-  $("cardWrap").classList.toggle("hidden", !CARD_MODES.includes(sel.mode));
+  $("cardWrap").classList.toggle("hidden", !isCardMode(sel.mode));
   $("fRecurring").classList.toggle("on", sel.recurring);
   $("fRecurring").setAttribute("aria-pressed", String(sel.recurring));
   $("emiWrap").classList.toggle("hidden", !sel.recurring);
@@ -359,7 +480,7 @@ function resetForm(): void {
   $<HTMLInputElement>("fEmiMonths").value = "";
   $<HTMLInputElement>("fDate").value = todayStr();
   $<HTMLSelectElement>("fCat").value = CATEGORIES[0]!;
-  sel.mode = "UPI";
+  sel.mode = modes[0]?.name ?? sel.mode;
   sel.recurring = false;
   sel.emi = false;
   sel.split = false;
@@ -418,15 +539,35 @@ function switchTab(t: Tab): void {
   renderAll();
 }
 
-function cardNames(): string[] {
-  const s = new Set(expenses.map((x) => x.card.trim()).filter(Boolean));
-  return [...s].sort((a, b) => a.localeCompare(b));
+function renderModeChips(): void {
+  $("fMode").innerHTML = modes
+    .map((m) => `<button type="button" class="chip" data-m="${esc(m.name)}">${esc(m.name)}</button>`)
+    .join("");
+}
+
+function renderModeManageList(): void {
+  $("modeManageList").innerHTML = modes.length
+    ? modes
+        .map(
+          (m) =>
+            `<button type="button" class="chip delchip" data-del-mode="${m.id}">${esc(m.name)}${m.is_card ? " 💳" : ""} <span class="x">×</span></button>`,
+        )
+        .join("")
+    : `<span style="font-size:12.5px;color:var(--faint)">No payment modes yet.</span>`;
 }
 
 function renderCardOptions(): void {
-  $("cardList").innerHTML = cardNames()
-    .map((c) => `<option value="${esc(c)}"></option>`)
-    .join("");
+  $("cardList").innerHTML = cards.map((c) => `<option value="${esc(c.name)}"></option>`).join("");
+}
+
+function renderCardManageList(): void {
+  $("cardManageList").innerHTML = cards.length
+    ? cards
+        .map(
+          (c) => `<button type="button" class="chip delchip" data-del-card="${c.id}">${esc(c.name)} <span class="x">×</span></button>`,
+        )
+        .join("")
+    : `<span style="font-size:12.5px;color:var(--faint)">No cards yet.</span>`;
 }
 
 function months(): string[] {
@@ -691,7 +832,6 @@ function renderAll(): void {
   renderLists();
   renderInsights();
   renderAudit();
-  renderCardOptions();
 }
 
 export function initApp(): void {

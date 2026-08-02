@@ -1,6 +1,6 @@
 import { createClient, type Session } from "@supabase/supabase-js";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
-import type { AuditRow, Expense, ExpenseInput } from "./types";
+import type { AuditRow, Card, Expense, ExpenseInput, PaymentMode } from "./types";
 
 export const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -53,5 +53,42 @@ export async function deleteExpense(id: string): Promise<string | null> {
 export function subscribeToExpenseChanges(cb: () => void): void {
   db.channel("expenses-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, cb)
+    .subscribe();
+}
+
+export async function fetchCards(): Promise<Card[]> {
+  const { data } = await db.from("cards").select("*").order("name");
+  return (data as Card[] | null) ?? [];
+}
+
+export async function insertCard(name: string): Promise<string | null> {
+  const { error } = await db.from("cards").insert({ name });
+  return error && error.code !== "23505" ? error.message : null;
+}
+
+export async function deleteCard(id: string): Promise<string | null> {
+  const { error } = await db.from("cards").delete().eq("id", id);
+  return error ? error.message : null;
+}
+
+export async function fetchPaymentModes(): Promise<PaymentMode[]> {
+  const { data } = await db.from("payment_modes").select("*").order("name");
+  return (data as PaymentMode[] | null) ?? [];
+}
+
+export async function insertPaymentMode(name: string, isCard: boolean): Promise<string | null> {
+  const { error } = await db.from("payment_modes").insert({ name, is_card: isCard });
+  return error && error.code !== "23505" ? error.message : null;
+}
+
+export async function deletePaymentMode(id: string): Promise<string | null> {
+  const { error } = await db.from("payment_modes").delete().eq("id", id);
+  return error ? error.message : null;
+}
+
+export function subscribeToLookupChanges(cb: () => void): void {
+  db.channel("lookups-live")
+    .on("postgres_changes", { event: "*", schema: "public", table: "cards" }, cb)
+    .on("postgres_changes", { event: "*", schema: "public", table: "payment_modes" }, cb)
     .subscribe();
 }

@@ -34,9 +34,6 @@ export const CATEGORIES = [
   "Other",
 ];
 
-export const MODES = ["Cash", "UPI", "Debit Card", "Credit Card", "Bank Transfer", "Other"];
-export const CARD_MODES = ["Debit Card", "Credit Card"];
-
 export const FIELD_LABELS: Record<string, string> = {
   amount: "Amount",
   description: "Description",

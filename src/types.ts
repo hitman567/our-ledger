@@ -29,6 +29,19 @@ export interface Expense {
 /** Fields the app writes when creating or editing an expense. */
 export type ExpenseInput = Omit<Expense, "id" | "created_by" | "created_at">;
 
+/** A row from the `cards` table — user-managed card names. */
+export interface Card {
+  id: string;
+  name: string;
+}
+
+/** A row from the `payment_modes` table — user-managed payment methods. */
+export interface PaymentMode {
+  id: string;
+  name: string;
+  is_card: boolean;
+}
+
 export type AuditAction = "INSERT" | "UPDATE" | "DELETE";
 
 /** A row from the read-only `audit_log` table. */
