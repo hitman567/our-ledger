@@ -22,6 +22,8 @@ export interface Expense {
   split: boolean;
   share_p0: number | null;
   share_p1: number | null;
+  emi: boolean;
+  emi_months: number | null;
 }
 
 /** Fields the app writes when creating or editing an expense. */
@@ -50,6 +52,7 @@ export interface FormSelection {
   paidBy: 0 | 1;
   mode: string;
   recurring: boolean;
+  emi: boolean;
   split: boolean;
   splitMode: SplitMode;
 }

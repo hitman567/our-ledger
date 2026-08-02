@@ -42,8 +42,6 @@
       <div class="sub" id="headMonth"></div>
       <div class="total" id="headTotal"></div>
       <div class="splitwrap" id="headSplit"></div>
-      <div class="gap" style="height:10px"></div>
-      <div class="splitwrap" id="headBalance"></div>
     </div>
   </header>
 
@@ -68,7 +66,8 @@
         <div class="chiprow" id="fMode"></div>
         <div id="cardWrap" class="hidden" style="margin-top:14px">
           <div class="label">Which card</div>
-          <input class="input" id="fCard" placeholder="e.g. HDFC Millennia, SBI Cashback" />
+          <input class="input" id="fCard" list="cardList" placeholder="e.g. HDFC Millennia, SBI Cashback" autocomplete="off" />
+          <datalist id="cardList"></datalist>
         </div>
         <div style="margin-top:16px">
           <div class="label">Split this expense?</div>
@@ -83,6 +82,16 @@
         <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
           <button class="toggle" id="fRecurring" aria-pressed="false"><span></span></button>
           <span style="font-size:14px;font-weight:600">Monthly subscription / recurring</span>
+        </div>
+        <div id="emiWrap" class="hidden" style="margin-top:14px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="toggle" id="fEmi" aria-pressed="false"><span></span></button>
+            <span style="font-size:14px;font-weight:600">This is an EMI (fixed number of months)</span>
+          </div>
+          <div id="emiMonthsWrap" class="hidden" style="margin-top:12px">
+            <div class="label">Tenure (months)</div>
+            <input class="input" id="fEmiMonths" inputmode="numeric" placeholder="e.g. 12" />
+          </div>
         </div>
         <div style="margin-top:14px">
           <div class="label">Note (optional)</div>

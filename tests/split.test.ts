@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  computeBalance,
-  equalShares,
-  isCustomSplitValid,
-  personIdx,
-  splitLabel,
-} from "../src/split";
+import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "../src/split";
 import type { Expense, Person } from "../src/types";
 
 const PEOPLE: [Person, Person] = [
@@ -30,6 +24,8 @@ function expense(overrides: Partial<Expense>): Expense {
     split: false,
     share_p0: null,
     share_p1: null,
+    emi: false,
+    emi_months: null,
     ...overrides,
   };
 }
@@ -61,25 +57,24 @@ describe("isCustomSplitValid", () => {
   });
 });
 
-describe("computeBalance", () => {
-  it("is zero with no split expenses", () => {
-    const rows = [expense({ split: false })];
-    expect(computeBalance(rows, PEOPLE)).toBe(0);
+describe("personSpend", () => {
+  it("attributes the full amount to the payer when not split", () => {
+    const x = expense({ amount: 100, paid_by: "Ayush", split: false });
+    expect(personSpend(x, 0, PEOPLE)).toBe(100);
+    expect(personSpend(x, 1, PEOPLE)).toBe(0);
   });
 
-  it("credits the payer the other person's share", () => {
-    // Ayush pays 200, split equally -> Archie owes Ayush 100
-    const rows = [expense({ amount: 200, paid_by: "Ayush", split: true, share_p0: 100, share_p1: 100 })];
-    expect(computeBalance(rows, PEOPLE)).toBe(100);
+  it("attributes each person's own share when split, regardless of payer", () => {
+    // Ayush pays 200, split equally -> each person's own spend is 100
+    const x = expense({ amount: 200, paid_by: "Ayush", split: true, share_p0: 100, share_p1: 100 });
+    expect(personSpend(x, 0, PEOPLE)).toBe(100);
+    expect(personSpend(x, 1, PEOPLE)).toBe(100);
   });
 
-  it("nets opposite-direction split expenses against each other", () => {
-    const rows = [
-      expense({ amount: 200, paid_by: "Ayush", split: true, share_p0: 100, share_p1: 100 }),
-      expense({ amount: 100, paid_by: "Archie", split: true, share_p0: 50, share_p1: 50 }),
-    ];
-    // Archie owed Ayush 100, now owes 50 less -> net 50
-    expect(computeBalance(rows, PEOPLE)).toBe(50);
+  it("handles an uneven custom split", () => {
+    const x = expense({ amount: 100, paid_by: "Archie", split: true, share_p0: 70, share_p1: 30 });
+    expect(personSpend(x, 0, PEOPLE)).toBe(70);
+    expect(personSpend(x, 1, PEOPLE)).toBe(30);
   });
 });
 
@@ -87,8 +82,8 @@ describe("splitLabel", () => {
   it("is blank for a non-split expense", () => {
     expect(splitLabel(expense({ split: false }), PEOPLE, "₹")).toBe("");
   });
-  it("names who owes whom", () => {
+  it("shows each person's own share", () => {
     const x = expense({ amount: 200, paid_by: "Ayush", split: true, share_p0: 100, share_p1: 100 });
-    expect(splitLabel(x, PEOPLE, "₹")).toBe("Archie owes Ayush ₹100");
+    expect(splitLabel(x, PEOPLE, "₹")).toBe("Split: Ayush ₹100 · Archie ₹100");
   });
 });

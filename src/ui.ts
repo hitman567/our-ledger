@@ -1,14 +1,7 @@
 import { CARD_MODES, CATEGORIES, CURRENCY, FIELD_LABELS, MODES, PEOPLE } from "./config";
 import { exportCSV } from "./csv";
 import { esc, fmt, monthLabel, monthOf, todayStr } from "./format";
-import {
-  balanceHTML,
-  computeBalance,
-  equalShares,
-  isCustomSplitValid,
-  personIdx,
-  splitLabel,
-} from "./split";
+import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "./split";
 import {
   deleteExpense as dbDeleteExpense,
   fetchAuditLog,
@@ -31,7 +24,14 @@ function $<T extends HTMLElement = HTMLElement>(id: string): T {
 let expenses: Expense[] = [];
 let editingId: string | null = null;
 let openRow: string | null = null;
-const sel: FormSelection = { paidBy: 0, mode: "UPI", recurring: false, split: false, splitMode: "no" };
+const sel: FormSelection = {
+  paidBy: 0,
+  mode: "UPI",
+  recurring: false,
+  emi: false,
+  split: false,
+  splitMode: "no",
+};
 let histMonth = monthOf(todayStr());
 let histPerson = -1;
 let histCat = "All";
@@ -141,6 +141,8 @@ async function saveExpense(): Promise<void> {
     split: sel.split,
     share_p0: sel.split ? share_p0 : null,
     share_p1: sel.split ? share_p1 : null,
+    emi: sel.recurring && sel.emi,
+    emi_months: sel.recurring && sel.emi ? parseInt($<HTMLInputElement>("fEmiMonths").value, 10) || null : null,
   };
   const saveBtn = $<HTMLButtonElement>("saveBtn");
   saveBtn.disabled = true;
@@ -194,8 +196,17 @@ function buildStaticControls(): void {
 
   $("fRecurring").addEventListener("click", () => {
     sel.recurring = !sel.recurring;
+    if (!sel.recurring) sel.emi = false;
     paintChips();
+    validate();
   });
+
+  $("fEmi").addEventListener("click", () => {
+    sel.emi = !sel.emi;
+    paintChips();
+    validate();
+  });
+  $("fEmiMonths").addEventListener("input", validate);
 
   $("fShare0Label").textContent = PEOPLE[0].name + "'s share";
   $("fShare1Label").textContent = PEOPLE[1].name + "'s share";
@@ -297,6 +308,10 @@ function paintChips(): void {
   $("cardWrap").classList.toggle("hidden", !CARD_MODES.includes(sel.mode));
   $("fRecurring").classList.toggle("on", sel.recurring);
   $("fRecurring").setAttribute("aria-pressed", String(sel.recurring));
+  $("emiWrap").classList.toggle("hidden", !sel.recurring);
+  $("fEmi").classList.toggle("on", sel.emi);
+  $("fEmi").setAttribute("aria-pressed", String(sel.emi));
+  $("emiMonthsWrap").classList.toggle("hidden", !(sel.recurring && sel.emi));
   $("fSplit")
     .querySelectorAll<HTMLElement>(".chip")
     .forEach((b) => b.classList.toggle("on", b.dataset["split"] === sel.splitMode));
@@ -319,11 +334,17 @@ function renderSplitPreview(): void {
       : "";
 }
 
+function emiValid(): boolean {
+  if (!sel.recurring || !sel.emi) return true;
+  return parseInt($<HTMLInputElement>("fEmiMonths").value, 10) > 0;
+}
+
 function validate(): void {
   $<HTMLButtonElement>("saveBtn").disabled = !(
     parseFloat($<HTMLInputElement>("fAmount").value) > 0 &&
     $<HTMLInputElement>("fDesc").value.trim() &&
-    splitValid()
+    splitValid() &&
+    emiValid()
   );
 }
 
@@ -335,10 +356,12 @@ function resetForm(): void {
   $<HTMLInputElement>("fCard").value = "";
   $<HTMLInputElement>("fShare0").value = "";
   $<HTMLInputElement>("fShare1").value = "";
+  $<HTMLInputElement>("fEmiMonths").value = "";
   $<HTMLInputElement>("fDate").value = todayStr();
   $<HTMLSelectElement>("fCat").value = CATEGORIES[0]!;
   sel.mode = "UPI";
   sel.recurring = false;
+  sel.emi = false;
   sel.split = false;
   sel.splitMode = "no";
   const saveBtn = $<HTMLButtonElement>("saveBtn");
@@ -359,6 +382,8 @@ function startEdit(id: string): void {
   sel.paidBy = Math.max(0, PEOPLE.findIndex((p) => p.name === x.paid_by)) as 0 | 1;
   sel.mode = x.mode;
   sel.recurring = !!x.recurring;
+  sel.emi = !!x.emi;
+  $<HTMLInputElement>("fEmiMonths").value = x.emi && x.emi_months ? String(x.emi_months) : "";
   sel.split = !!x.split;
   if (sel.split) {
     const s0 = Number(x.share_p0) || 0;
@@ -393,6 +418,17 @@ function switchTab(t: Tab): void {
   renderAll();
 }
 
+function cardNames(): string[] {
+  const s = new Set(expenses.map((x) => x.card.trim()).filter(Boolean));
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+
+function renderCardOptions(): void {
+  $("cardList").innerHTML = cardNames()
+    .map((c) => `<option value="${esc(c)}"></option>`)
+    .join("");
+}
+
 function months(): string[] {
   const s = new Set(expenses.map((x) => monthOf(x.date)));
   s.add(monthOf(todayStr()));
@@ -419,7 +455,7 @@ function rowHTML(x: Expense): string {
     <div class="rowmain" data-row="${x.id}">
       <span class="rowbar" style="background:var(--p${i})"></span>
       <div style="flex:1;min-width:0">
-        <div class="rowdesc">${esc(x.description)} ${x.recurring ? "🔁" : ""} ${x.split ? "⇄" : ""}</div>
+        <div class="rowdesc">${esc(x.description)} ${x.emi ? "🏷️" : x.recurring ? "🔁" : ""} ${x.split ? "⇄" : ""}</div>
         <div class="rowsub">${d} · ${esc(x.category)} · ${esc(x.paid_by)}</div>
       </div>
       <div class="rowamt">${CURRENCY}${fmt(x.amount)}</div>
@@ -429,6 +465,7 @@ function rowHTML(x: Expense): string {
         ? `<div class="rowdetail">
         <span>${esc(x.mode)}${x.card ? " · " + esc(x.card) : ""}</span>
         ${x.split ? `<span>${splitLabel(x, PEOPLE, CURRENCY)}</span>` : ""}
+        ${x.emi ? `<span>EMI${x.emi_months ? ` · ${x.emi_months} months` : ""}</span>` : ""}
         ${x.note ? `<span>"${esc(x.note)}"</span>` : ""}
         <span style="flex:1"></span>
         <button class="linkbtn" style="color:var(--green)" data-edit="${x.id}">Edit</button>
@@ -450,12 +487,11 @@ function renderHeader(): void {
   const rows = expenses.filter((x) => monthOf(x.date) === tm);
   const total = rows.reduce((s, x) => s + Number(x.amount), 0);
   const byP: [number, number] = [0, 1].map((i) =>
-    rows.filter((x) => personIdx(x.paid_by, PEOPLE) === i).reduce((s, x) => s + Number(x.amount), 0),
+    rows.reduce((s, x) => s + personSpend(x, i as 0 | 1, PEOPLE), 0),
   ) as [number, number];
   $("headMonth").textContent = monthLabel(tm) + " so far";
   $("headTotal").textContent = CURRENCY + fmt(total);
   $("headSplit").innerHTML = splitBarHTML(byP);
-  $("headBalance").innerHTML = balanceHTML(computeBalance(expenses, PEOPLE), PEOPLE, CURRENCY);
 }
 
 function renderLists(): void {
@@ -488,7 +524,7 @@ function renderInsights(): void {
   const rows = expenses.filter((x) => monthOf(x.date) === insMonth);
   const total = rows.reduce((s, x) => s + Number(x.amount), 0);
   const byP: [number, number] = [0, 1].map((i) =>
-    rows.filter((x) => personIdx(x.paid_by, PEOPLE) === i).reduce((s, x) => s + Number(x.amount), 0),
+    rows.reduce((s, x) => s + personSpend(x, i as 0 | 1, PEOPLE), 0),
   ) as [number, number];
 
   const byCat: Record<string, number> = {};
@@ -517,10 +553,6 @@ function renderInsights(): void {
 
   $("insBody").innerHTML = `
     <div class="box">
-      <div class="label">Balance · all time</div>
-      ${balanceHTML(computeBalance(expenses, PEOPLE), PEOPLE, CURRENCY)}
-    </div>
-    <div class="box">
       <div class="label">Total spent · ${monthLabel(insMonth)}</div>
       <div class="mono" style="font-size:34px;font-weight:700;margin-bottom:16px">${CURRENCY}${fmt(total)}</div>
       ${splitBarHTML(byP)}
@@ -548,7 +580,7 @@ function renderInsights(): void {
           ? subs
               .map(
                 (s) => `
-          <div class="lline"><span>🔁 ${esc(s.description)}</span><span class="mono">${CURRENCY}${fmt(s.amount)}</span></div>`,
+          <div class="lline"><span>${s.emi ? "🏷️" : "🔁"} ${esc(s.description)}${s.emi ? ` <span style="color:var(--faint)">(EMI${s.emi_months ? ` · ${s.emi_months}mo` : ""})</span>` : ""}</span><span class="mono">${CURRENCY}${fmt(s.amount)}</span></div>`,
               )
               .join("") +
             `<div class="lline" style="border:none;font-weight:700;padding-top:10px"><span>Total recurring</span><span class="mono">${CURRENCY}${fmt(subTotal)}</span></div>`
@@ -659,6 +691,7 @@ function renderAll(): void {
   renderLists();
   renderInsights();
   renderAudit();
+  renderCardOptions();
 }
 
 export function initApp(): void {

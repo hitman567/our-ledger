@@ -6,45 +6,20 @@ export function personIdx(paidBy: string, people: readonly [Person, Person]): 0 
 }
 
 /**
- * Net all-time balance across every split expense.
- * Positive => people[1] owes people[0]; negative => people[0] owes people[1].
+ * How much of an expense's cost counts toward one person's own spending,
+ * regardless of who fronted the payment. Split expenses attribute each
+ * person's share to them directly; unsplit expenses attribute the full
+ * amount to whoever paid.
  */
-export function computeBalance(rows: readonly Expense[], people: readonly [Person, Person]): number {
-  let net = 0;
-  for (const x of rows) {
-    if (!x.split) continue;
-    const payer = personIdx(x.paid_by, people);
-    const s0 = Number(x.share_p0) || 0;
-    const s1 = Number(x.share_p1) || 0;
-    net += payer === 0 ? s1 : -s0;
-  }
-  return net;
-}
-
-export function balanceHTML(
-  net: number,
-  people: readonly [Person, Person],
-  currency: string,
-): string {
-  if (Math.abs(net) < 0.005) {
-    return `<div style="font-size:13.5px;text-align:center">You're all settled up</div>`;
-  }
-  const owes = net > 0 ? people[1] : people[0];
-  const owed = net > 0 ? people[0] : people[1];
-  return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px">
-    <span><b>${esc(owes.name)}</b> owes <b>${esc(owed.name)}</b></span>
-    <span class="mono" style="font-weight:700;font-size:16px">${currency}${fmt(Math.abs(net))}</span>
-  </div>`;
+export function personSpend(x: Expense, i: 0 | 1, people: readonly [Person, Person]): number {
+  if (!x.split) return personIdx(x.paid_by, people) === i ? Number(x.amount) || 0 : 0;
+  return (i === 0 ? Number(x.share_p0) : Number(x.share_p1)) || 0;
 }
 
 export function splitLabel(x: Expense, people: readonly [Person, Person], currency: string): string {
   if (!x.split) return "";
-  const payer = personIdx(x.paid_by, people);
-  const other = payer === 0 ? 1 : 0;
   const shares: SplitShares = [Number(x.share_p0) || 0, Number(x.share_p1) || 0];
-  const owed = shares[other];
-  if (owed <= 0) return "Split";
-  return `${esc(people[other].name)} owes ${esc(people[payer].name)} ${currency}${fmt(owed)}`;
+  return `Split: ${esc(people[0].name)} ${currency}${fmt(shares[0])} · ${esc(people[1].name)} ${currency}${fmt(shares[1])}`;
 }
 
 export function equalShares(amount: number): SplitShares {

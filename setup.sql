@@ -21,6 +21,10 @@ alter table expenses add column if not exists split boolean not null default fal
 alter table expenses add column if not exists share_p0 numeric;
 alter table expenses add column if not exists share_p1 numeric;
 
+-- EMIs: a recurring expense with a fixed tenure (added later; safe to run again)
+alter table expenses add column if not exists emi boolean not null default false;
+alter table expenses add column if not exists emi_months integer;
+
 alter table expenses enable row level security;
 
 drop policy if exists "authenticated users full access" on expenses;

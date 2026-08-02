@@ -50,4 +50,6 @@ export const FIELD_LABELS: Record<string, string> = {
   split: "Split",
   share_p0: `${PEOPLE[0].name}'s share`,
   share_p1: `${PEOPLE[1].name}'s share`,
+  emi: "EMI",
+  emi_months: "EMI tenure (months)",
 };
