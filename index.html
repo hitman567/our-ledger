@@ -56,7 +56,20 @@
         <div class="gap"></div>
         <div class="two">
           <div><div class="label">Date</div><input class="input" id="fDate" type="date" /></div>
-          <div><div class="label">Category</div><select class="input" id="fCat"></select></div>
+          <div>
+            <div class="label" style="display:flex;justify-content:space-between;align-items:center">
+              <span>Category</span>
+              <button type="button" class="linkbtn" id="catManageBtn">Manage</button>
+            </div>
+            <select class="input" id="fCat"></select>
+          </div>
+        </div>
+        <div id="catManagePanel" class="hidden" style="margin-top:10px">
+          <div class="chiprow" id="catManageList"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <input class="input" id="newCatName" placeholder="New category" style="flex:1" />
+            <button type="button" class="smallbtn" id="addCatBtn">Add</button>
+          </div>
         </div>
         <div class="gap"></div>
         <div class="label">Paid by</div>

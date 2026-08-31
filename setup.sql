@@ -111,6 +111,55 @@ insert into payment_modes (name, is_card) values
   ('Other', false)
 on conflict (lower(name)) do nothing;
 
+-- ============ CATEGORIES ============
+-- User-managed list of expense categories (add from the app). Matching is
+-- case-insensitive so "Groceries" and "groceries" can't both exist.
+
+create table if not exists categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists categories_name_lower_idx on categories (lower(name));
+
+alter table categories enable row level security;
+
+drop policy if exists "authenticated users full access" on categories;
+create policy "authenticated users full access"
+  on categories for all
+  to authenticated
+  using (true)
+  with check (true);
+
+do $$ begin
+  alter publication supabase_realtime add table categories;
+exception when duplicate_object then null;
+end $$;
+
+insert into categories (name) values
+  ('Food & Dining'),
+  ('Groceries'),
+  ('Transport'),
+  ('Rent & Home'),
+  ('Utilities & Bills'),
+  ('Subscriptions'),
+  ('Shopping'),
+  ('Health'),
+  ('Entertainment'),
+  ('Travel'),
+  ('Other')
+on conflict (lower(name)) do nothing;
+
+-- Pick up any category names already sitting in expenses (e.g. from before
+-- this table existed), deduped case-insensitively, keeping the earliest casing.
+insert into categories (name)
+select distinct on (lower(category)) category
+from expenses
+where category is not null and trim(category) <> ''
+order by lower(category), created_at asc
+on conflict (lower(name)) do nothing;
+
 -- ============ AUDIT LOG ============
 -- Every add, edit, and delete is recorded automatically by the
 -- database itself. The app can only READ this log, never change it.

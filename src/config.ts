@@ -20,20 +20,6 @@ export const PEOPLE: [Person, Person] = [
 
 export const CURRENCY = "₹";
 
-export const CATEGORIES = [
-  "Food & Dining",
-  "Groceries",
-  "Transport",
-  "Rent & Home",
-  "Utilities & Bills",
-  "Subscriptions",
-  "Shopping",
-  "Health",
-  "Entertainment",
-  "Travel",
-  "Other",
-];
-
 export const FIELD_LABELS: Record<string, string> = {
   amount: "Amount",
   description: "Description",

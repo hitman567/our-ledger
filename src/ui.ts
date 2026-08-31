@@ -1,16 +1,19 @@
-import { CATEGORIES, CURRENCY, FIELD_LABELS, PEOPLE } from "./config";
+import { CURRENCY, FIELD_LABELS, PEOPLE } from "./config";
 import { exportCSV } from "./csv";
 import { esc, fmt, monthLabel, monthOf, todayStr } from "./format";
 import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "./split";
 import {
   deleteCard as dbDeleteCard,
+  deleteCategory as dbDeleteCategory,
   deleteExpense as dbDeleteExpense,
   deletePaymentMode as dbDeletePaymentMode,
   fetchAuditLog,
   fetchCards,
+  fetchCategories,
   fetchExpenses,
   fetchPaymentModes,
   insertCard as dbInsertCard,
+  insertCategory as dbInsertCategory,
   insertExpense,
   insertPaymentMode as dbInsertPaymentMode,
   onAuthStateChange,
@@ -20,7 +23,7 @@ import {
   subscribeToLookupChanges,
   updateExpense as dbUpdateExpense,
 } from "./supabaseClient";
-import type { AuditRow, Card, Expense, ExpenseInput, FormSelection, PaymentMode, SplitMode, Tab } from "./types";
+import type { AuditRow, Card, Category, Expense, ExpenseInput, FormSelection, PaymentMode, SplitMode, Tab } from "./types";
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -31,6 +34,7 @@ function $<T extends HTMLElement = HTMLElement>(id: string): T {
 let expenses: Expense[] = [];
 let cards: Card[] = [];
 let modes: PaymentMode[] = [];
+let categories: Category[] = [];
 let editingId: string | null = null;
 let openRow: string | null = null;
 const sel: FormSelection = {
@@ -109,15 +113,28 @@ function normalizeCardName(name: string): string {
   return existing ? existing.name : trimmed;
 }
 
+function titleCase(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 async function fetchLookups(): Promise<void> {
-  const [c, m] = await Promise.all([fetchCards(), fetchPaymentModes()]);
+  const [c, m, cat] = await Promise.all([fetchCards(), fetchPaymentModes(), fetchCategories()]);
   cards = c;
   modes = m;
+  categories = cat;
   if (modes.length && !modes.some((x) => x.name === sel.mode)) sel.mode = modes[0]!.name;
   renderModeChips();
   renderCardOptions();
   renderModeManageList();
   renderCardManageList();
+  renderCategoryOptions();
+  renderCategoryManageList();
   paintChips();
 }
 
@@ -266,11 +283,39 @@ async function deleteCardFlow(id: string): Promise<void> {
   await fetchLookups();
 }
 
+async function addCategory(): Promise<void> {
+  const input = $<HTMLInputElement>("newCatName");
+  const raw = input.value.trim();
+  if (!raw) return;
+  const name = titleCase(raw);
+  if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    input.value = "";
+    return;
+  }
+  const error = await dbInsertCategory(name);
+  if (error) {
+    alert("Could not add: " + error);
+    return;
+  }
+  input.value = "";
+  await fetchLookups();
+}
+
+async function deleteCategoryFlow(id: string): Promise<void> {
+  const c = categories.find((x) => x.id === id);
+  if (!c || !confirm(`Delete category "${c.name}"?`)) return;
+  const error = await dbDeleteCategory(id);
+  if (error) {
+    alert("Could not delete: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
 /* ---------------- form ---------------- */
 function buildStaticControls(): void {
   $("curSym").textContent = CURRENCY;
   $<HTMLInputElement>("fDate").value = todayStr();
-  $<HTMLSelectElement>("fCat").innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join("");
   $("headNames").textContent = PEOPLE.map((p) => p.name.toUpperCase()).join(" + ") + " · LEDGER";
 
   $("fPaidBy").innerHTML = PEOPLE.map(
@@ -303,6 +348,14 @@ function buildStaticControls(): void {
   $("addCardBtn").addEventListener("click", () => void addCardFromManage());
   $<HTMLInputElement>("newCardName").addEventListener("keydown", (e) => {
     if (e.key === "Enter") void addCardFromManage();
+  });
+
+  $("catManageBtn").addEventListener("click", () => {
+    $("catManagePanel").classList.toggle("hidden");
+  });
+  $("addCatBtn").addEventListener("click", () => void addCategory());
+  $<HTMLInputElement>("newCatName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void addCategory();
   });
 
   $("fRecurring").addEventListener("click", () => {
@@ -375,8 +428,6 @@ function buildStaticControls(): void {
     histPerson = Number(b.dataset["hp"]);
     renderHistory();
   });
-  $<HTMLSelectElement>("histCat").innerHTML =
-    `<option>All</option>` + CATEGORIES.map((c) => `<option>${c}</option>`).join("");
   $<HTMLSelectElement>("insMonth").addEventListener("change", (e) => {
     insMonth = (e.target as HTMLSelectElement).value;
     renderInsights();
@@ -406,6 +457,11 @@ function buildStaticControls(): void {
     const delCard = target.closest<HTMLElement>("[data-del-card]");
     if (delCard) {
       void deleteCardFlow(delCard.dataset["delCard"]!);
+      return;
+    }
+    const delCat = target.closest<HTMLElement>("[data-del-cat]");
+    if (delCat) {
+      void deleteCategoryFlow(delCat.dataset["delCat"]!);
       return;
     }
     const row = target.closest<HTMLElement>("[data-row]");
@@ -479,7 +535,7 @@ function resetForm(): void {
   $<HTMLInputElement>("fShare1").value = "";
   $<HTMLInputElement>("fEmiMonths").value = "";
   $<HTMLInputElement>("fDate").value = todayStr();
-  $<HTMLSelectElement>("fCat").value = CATEGORIES[0]!;
+  $<HTMLSelectElement>("fCat").value = categories[0]?.name ?? "";
   sel.mode = modes[0]?.name ?? sel.mode;
   sel.recurring = false;
   sel.emi = false;
@@ -568,6 +624,28 @@ function renderCardManageList(): void {
         )
         .join("")
     : `<span style="font-size:12.5px;color:var(--faint)">No cards yet.</span>`;
+}
+
+function renderCategoryOptions(): void {
+  const catSel = $<HTMLSelectElement>("fCat");
+  const current = catSel.value;
+  catSel.innerHTML = categories.map((c) => `<option>${esc(c.name)}</option>`).join("");
+  if (categories.some((c) => c.name === current)) catSel.value = current;
+  else if (categories.length) catSel.value = categories[0]!.name;
+
+  const histSel = $<HTMLSelectElement>("histCat");
+  histSel.innerHTML = `<option>All</option>` + categories.map((c) => `<option>${esc(c.name)}</option>`).join("");
+  histSel.value = histCat === "All" || categories.some((c) => c.name === histCat) ? histCat : "All";
+}
+
+function renderCategoryManageList(): void {
+  $("catManageList").innerHTML = categories.length
+    ? categories
+        .map(
+          (c) => `<button type="button" class="chip delchip" data-del-cat="${c.id}">${esc(c.name)} <span class="x">×</span></button>`,
+        )
+        .join("")
+    : `<span style="font-size:12.5px;color:var(--faint)">No categories yet.</span>`;
 }
 
 function months(): string[] {

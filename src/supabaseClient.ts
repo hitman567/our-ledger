@@ -1,6 +1,6 @@
 import { createClient, type Session } from "@supabase/supabase-js";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
-import type { AuditRow, Card, Expense, ExpenseInput, PaymentMode } from "./types";
+import type { AuditRow, Card, Category, Expense, ExpenseInput, PaymentMode } from "./types";
 
 export const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -86,9 +86,25 @@ export async function deletePaymentMode(id: string): Promise<string | null> {
   return error ? error.message : null;
 }
 
+export async function fetchCategories(): Promise<Category[]> {
+  const { data } = await db.from("categories").select("*").order("name");
+  return (data as Category[] | null) ?? [];
+}
+
+export async function insertCategory(name: string): Promise<string | null> {
+  const { error } = await db.from("categories").insert({ name });
+  return error && error.code !== "23505" ? error.message : null;
+}
+
+export async function deleteCategory(id: string): Promise<string | null> {
+  const { error } = await db.from("categories").delete().eq("id", id);
+  return error ? error.message : null;
+}
+
 export function subscribeToLookupChanges(cb: () => void): void {
   db.channel("lookups-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "cards" }, cb)
     .on("postgres_changes", { event: "*", schema: "public", table: "payment_modes" }, cb)
+    .on("postgres_changes", { event: "*", schema: "public", table: "categories" }, cb)
     .subscribe();
 }

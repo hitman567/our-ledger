@@ -42,6 +42,12 @@ export interface PaymentMode {
   is_card: boolean;
 }
 
+/** A row from the `categories` table — user-managed expense categories. */
+export interface Category {
+  id: string;
+  name: string;
+}
+
 export type AuditAction = "INSERT" | "UPDATE" | "DELETE";
 
 /** A row from the read-only `audit_log` table. */
