@@ -83,6 +83,11 @@ export async function deleteCard(id: string): Promise<string | null> {
   return error ? error.message : null;
 }
 
+export async function updateCard(id: string, patch: Partial<Card>): Promise<string | null> {
+  const { error } = await db.from("cards").update(patch).eq("id", id);
+  return error ? error.message : null;
+}
+
 export async function fetchPaymentModes(): Promise<PaymentMode[]> {
   const { data } = await db.from("payment_modes").select("*").order("name");
   return (data as PaymentMode[] | null) ?? [];

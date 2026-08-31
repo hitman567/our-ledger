@@ -35,3 +35,35 @@ export function addInterval(dateStr: string, freq: "monthly" | "yearly", count: 
   const targetD = Math.min(d!, lastDay);
   return `${targetY}-${String(targetM).padStart(2, "0")}-${String(targetD).padStart(2, "0")}`;
 }
+
+/**
+ * The card billing-cycle end date (YYYY-MM-DD) for the statement generated
+ * in calendar month y-m, clamping the billing day to that month's last day.
+ */
+export function cycleEndDate(y: number, m: number, billingDate: number): string {
+  const d = Math.min(billingDate, new Date(y, m, 0).getDate());
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** The calendar day after a YYYY-MM-DD date string. */
+export function dayAfter(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y!, m! - 1, d! + 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * The payment due date for a statement whose cycle ends on `cycleEndStr`.
+ * If the due day falls before-or-on the billing day (e.g. billing on the
+ * 28th, due on the 15th), it's the 15th of the *next* month, not the same
+ * one — that's how card statements normally work.
+ */
+export function dueDateFor(cycleEndStr: string, billingDate: number, dueDate: number): string {
+  const y = Number(cycleEndStr.slice(0, 4));
+  const m = Number(cycleEndStr.slice(5, 7));
+  const monthsAhead = dueDate > billingDate ? 0 : 1;
+  const totalMonths = m - 1 + monthsAhead;
+  const targetY = y + Math.floor(totalMonths / 12);
+  const targetM = ((totalMonths % 12) + 12) % 12 + 1;
+  return cycleEndDate(targetY, targetM, dueDate);
+}

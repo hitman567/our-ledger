@@ -37,6 +37,10 @@ export type ExpenseInput = Omit<Expense, "id" | "created_by" | "created_at">;
 export interface Card {
   id: string;
   name: string;
+  /** Day of month (1-31) the statement is generated, if known. */
+  billing_date: number | null;
+  /** Day of month (1-31) payment is due, if known. */
+  due_date: number | null;
 }
 
 /** A row from the `payment_modes` table — user-managed payment methods. */

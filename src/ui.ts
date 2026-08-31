@@ -1,6 +1,6 @@
 import { CURRENCY, FIELD_LABELS, PEOPLE } from "./config";
 import { exportCSV } from "./csv";
-import { addInterval, esc, fmt, monthLabel, monthOf, todayStr } from "./format";
+import { addInterval, cycleEndDate, dayAfter, dueDateFor, esc, fmt, monthLabel, monthOf, todayStr } from "./format";
 import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "./split";
 import {
   deleteCard as dbDeleteCard,
@@ -25,6 +25,7 @@ import {
   signOut as dbSignOut,
   subscribeToExpenseChanges,
   subscribeToLookupChanges,
+  updateCard as dbUpdateCard,
   updateExpense as dbUpdateExpense,
   updateSubscription as dbUpdateSubscription,
 } from "./supabaseClient";
@@ -69,6 +70,8 @@ let histPerson = -1;
 let histCat = "All";
 let insMonth = monthOf(todayStr());
 let auditRows: AuditRow[] = [];
+let cycleCardId: string | null = null;
+let cycleEnd: string | null = null;
 
 /* ---------------- auth ---------------- */
 function wireAuth(): void {
@@ -156,6 +159,7 @@ async function fetchLookups(): Promise<void> {
   renderCategoryOptions();
   renderCategoryManageList();
   renderSubscriptionManageList();
+  renderCardCycleBox();
   paintChips();
 }
 
@@ -419,6 +423,18 @@ async function deleteCardFlow(id: string): Promise<void> {
   await fetchLookups();
 }
 
+async function updateCardDateFlow(id: string, field: "billing_date" | "due_date", raw: string): Promise<void> {
+  const n = parseInt(raw, 10);
+  const value = n >= 1 && n <= 31 ? n : null;
+  const patch: Partial<Card> = field === "billing_date" ? { billing_date: value } : { due_date: value };
+  const error = await dbUpdateCard(id, patch);
+  if (error) {
+    alert("Could not save: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
 async function addCategory(): Promise<void> {
   const input = $<HTMLInputElement>("newCatName");
   const raw = input.value.trim();
@@ -601,6 +617,15 @@ function buildStaticControls(): void {
     insMonth = (e.target as HTMLSelectElement).value;
     renderInsights();
   });
+  $<HTMLSelectElement>("cycleCard").addEventListener("change", (e) => {
+    cycleCardId = (e.target as HTMLSelectElement).value || null;
+    cycleEnd = null;
+    renderCardCycleBox();
+  });
+  $<HTMLSelectElement>("cycleRange").addEventListener("change", (e) => {
+    cycleEnd = (e.target as HTMLSelectElement).value;
+    renderCardCycleBox();
+  });
 
   document.querySelectorAll<HTMLElement>("nav [data-tab]").forEach((b) =>
     b.addEventListener("click", () => switchTab(b.dataset["tab"] as Tab)),
@@ -647,6 +672,20 @@ function buildStaticControls(): void {
     if (row) {
       openRow = openRow === row.dataset["row"] ? null : (row.dataset["row"] ?? null);
       renderLists();
+    }
+  });
+
+  document.addEventListener("change", (e) => {
+    const target = e.target as HTMLInputElement;
+    const billing = target.closest<HTMLInputElement>("[data-card-billing]");
+    if (billing) {
+      void updateCardDateFlow(billing.dataset["cardBilling"]!, "billing_date", billing.value);
+      return;
+    }
+    const due = target.closest<HTMLInputElement>("[data-card-due]");
+    if (due) {
+      void updateCardDateFlow(due.dataset["cardDue"]!, "due_date", due.value);
+      return;
     }
   });
 
@@ -804,7 +843,22 @@ function renderCardManageList(): void {
   $("cardManageList").innerHTML = cards.length
     ? cards
         .map(
-          (c) => `<button type="button" class="chip delchip" data-del-card="${c.id}">${esc(c.name)} <span class="x">×</span></button>`,
+          (c) => `<div class="box" style="padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div style="font-weight:600;font-size:13.5px">${esc(c.name)}</div>
+          <button type="button" class="linkbtn" style="color:var(--danger)" data-del-card="${c.id}">Delete</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="flex:1">
+            <div class="label" style="font-size:11px">Billing date</div>
+            <input class="input" type="number" min="1" max="31" placeholder="e.g. 5" data-card-billing="${c.id}" value="${c.billing_date ?? ""}" />
+          </div>
+          <div style="flex:1">
+            <div class="label" style="font-size:11px">Due date</div>
+            <input class="input" type="number" min="1" max="31" placeholder="e.g. 25" data-card-due="${c.id}" value="${c.due_date ?? ""}" />
+          </div>
+        </div>
+      </div>`,
         )
         .join("")
     : `<span style="font-size:12.5px;color:var(--faint)">No cards yet.</span>`;
@@ -947,8 +1001,75 @@ function renderHistory(): void {
   $("histList").innerHTML = rows.map(rowHTML).join("") || `<div class="empty">Nothing matches these filters.</div>`;
 }
 
+function cardCycles(billingDate: number): { start: string; end: string }[] {
+  const [ty, tm] = todayStr().split("-").map(Number);
+  const ends: string[] = [];
+  // k starts one cycle earlier than we display, purely to derive the
+  // oldest displayed cycle's start date from a real previous cycle-end.
+  for (let k = -12; k <= 1; k++) {
+    const total = tm! - 1 + k;
+    const y = ty! + Math.floor(total / 12);
+    const m = ((total % 12) + 12) % 12 + 1;
+    ends.push(cycleEndDate(y, m, billingDate));
+  }
+  const sorted = [...new Set(ends)].sort();
+  return sorted.slice(1).map((end, i) => ({ end, start: dayAfter(sorted[i]!) }));
+}
+
+function renderCardCycleBox(): void {
+  const withBilling = cards.filter((c) => c.billing_date != null);
+  const cardSel = $<HTMLSelectElement>("cycleCard");
+  const rangeSel = $<HTMLSelectElement>("cycleRange");
+  const body = $("cycleBody");
+
+  if (!withBilling.length) {
+    cardSel.innerHTML = `<option value="">No cards with a billing date set</option>`;
+    rangeSel.innerHTML = "";
+    body.innerHTML = `<div class="empty" style="padding:0">Set a billing date for a card under the card "Manage" panel to see its cycle spend here.</div>`;
+    return;
+  }
+  if (!cycleCardId || !withBilling.some((c) => c.id === cycleCardId)) cycleCardId = withBilling[0]!.id;
+  cardSel.innerHTML = withBilling
+    .map((c) => `<option value="${c.id}" ${c.id === cycleCardId ? "selected" : ""}>${esc(c.name)}</option>`)
+    .join("");
+
+  const card = withBilling.find((c) => c.id === cycleCardId)!;
+  const cycles = cardCycles(card.billing_date!);
+  const today = todayStr();
+  const currentIdx = cycles.findIndex((c) => today <= c.end);
+  const current = cycles[currentIdx >= 0 ? currentIdx : cycles.length - 1]!;
+  if (!cycleEnd || !cycles.some((c) => c.end === cycleEnd)) cycleEnd = current.end;
+
+  const dateLabel = (d: string, withYear = true) =>
+    new Date(d + "T00:00").toLocaleDateString("en", {
+      day: "numeric",
+      month: "short",
+      ...(withYear ? { year: "numeric" as const } : {}),
+    });
+  rangeSel.innerHTML = [...cycles]
+    .reverse()
+    .map(
+      (c) =>
+        `<option value="${c.end}" ${c.end === cycleEnd ? "selected" : ""}>${dateLabel(c.start, false)} – ${dateLabel(c.end)}${c.end === current.end ? " (current)" : ""}</option>`,
+    )
+    .join("");
+
+  const cycle = cycles.find((c) => c.end === cycleEnd)!;
+  const rows = expenses.filter(
+    (x) => x.card.toLowerCase() === card.name.toLowerCase() && x.date >= cycle.start && x.date <= cycle.end,
+  );
+  const total = rows.reduce((s, x) => s + Number(x.amount), 0);
+  const dueLabel = card.due_date ? dateLabel(dueDateFor(cycle.end, card.billing_date!, card.due_date)) : null;
+
+  body.innerHTML = `
+    <div class="mono" style="font-size:26px;font-weight:700">${CURRENCY}${fmt(total)}</div>
+    <div class="rowsub" style="margin-top:2px">${rows.length} ${rows.length === 1 ? "charge" : "charges"} on ${esc(card.name)}${dueLabel ? ` · due ${dueLabel}` : ""}</div>
+    <div class="listbox" style="margin-top:12px">${rows.map(rowHTML).join("") || `<div class="empty">No charges in this cycle.</div>`}</div>`;
+}
+
 function renderInsights(): void {
   fillMonthSelect($<HTMLSelectElement>("insMonth"), insMonth);
+  renderCardCycleBox();
   const rows = expenses.filter((x) => monthOf(x.date) === insMonth);
   const total = rows.reduce((s, x) => s + Number(x.amount), 0);
   const byP: [number, number] = [0, 1].map((i) =>

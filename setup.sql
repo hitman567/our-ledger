@@ -52,6 +52,11 @@ create table if not exists cards (
 
 create unique index if not exists cards_name_lower_idx on cards (lower(name));
 
+-- Statement/due day-of-month, so spend can be filtered by billing cycle
+-- instead of calendar month (added later; safe to run again).
+alter table cards add column if not exists billing_date integer check (billing_date between 1 and 31);
+alter table cards add column if not exists due_date integer check (due_date between 1 and 31);
+
 alter table cards enable row level security;
 
 drop policy if exists "authenticated users full access" on cards;
