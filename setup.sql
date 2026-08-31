@@ -180,9 +180,18 @@ create table if not exists subscriptions (
   next_due date not null,
   active boolean not null default true,
   skip_next boolean not null default false,
+  split boolean not null default false,
+  share_p0 numeric,
+  share_p1 numeric,
   created_by uuid default auth.uid(),
   created_at timestamptz not null default now()
 );
+
+-- In case this table was created by an earlier version of this script
+-- (before splits were carried over into subscriptions).
+alter table subscriptions add column if not exists split boolean not null default false;
+alter table subscriptions add column if not exists share_p0 numeric;
+alter table subscriptions add column if not exists share_p1 numeric;
 
 alter table subscriptions enable row level security;
 

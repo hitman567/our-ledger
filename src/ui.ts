@@ -189,9 +189,9 @@ async function runSubscriptionCatchup(): Promise<void> {
           card: s.card,
           recurring: true,
           note: s.note,
-          split: false,
-          share_p0: null,
-          share_p1: null,
+          split: s.split,
+          share_p0: s.share_p0,
+          share_p1: s.share_p1,
           emi: false,
           emi_months: null,
           emi_index: null,
@@ -331,6 +331,9 @@ async function saveExpense(): Promise<void> {
         next_due: addInterval(date, sel.subFrequency, 1),
         active: true,
         skip_next: false,
+        split: sel.split,
+        share_p0: sel.split ? share_p0 : null,
+        share_p1: sel.split ? share_p1 : null,
       });
       if (subError) alert("Expense saved, but couldn't schedule future auto-renewals: " + subError);
     }

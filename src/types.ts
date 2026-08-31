@@ -72,6 +72,9 @@ export interface Subscription {
   next_due: string; // YYYY-MM-DD
   active: boolean;
   skip_next: boolean;
+  split: boolean;
+  share_p0: number | null;
+  share_p1: number | null;
 }
 
 export type AuditAction = "INSERT" | "UPDATE" | "DELETE";
