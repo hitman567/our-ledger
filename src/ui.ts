@@ -1,6 +1,6 @@
 import { CURRENCY, FIELD_LABELS, PEOPLE } from "./config";
 import { exportCSV } from "./csv";
-import { esc, fmt, monthLabel, monthOf, todayStr } from "./format";
+import { addInterval, esc, fmt, monthLabel, monthOf, todayStr } from "./format";
 import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "./split";
 import {
   deleteCard as dbDeleteCard,
@@ -12,18 +12,35 @@ import {
   fetchCategories,
   fetchExpenses,
   fetchPaymentModes,
+  fetchSubscriptions,
   insertCard as dbInsertCard,
   insertCategory as dbInsertCategory,
   insertExpense,
+  insertExpensesBulk as dbInsertExpensesBulk,
+  insertGeneratedExpense as dbInsertGeneratedExpense,
   insertPaymentMode as dbInsertPaymentMode,
+  insertSubscription as dbInsertSubscription,
   onAuthStateChange,
   signIn as dbSignIn,
   signOut as dbSignOut,
   subscribeToExpenseChanges,
   subscribeToLookupChanges,
   updateExpense as dbUpdateExpense,
+  updateSubscription as dbUpdateSubscription,
 } from "./supabaseClient";
-import type { AuditRow, Card, Category, Expense, ExpenseInput, FormSelection, PaymentMode, SplitMode, Tab } from "./types";
+import type {
+  AuditRow,
+  Card,
+  Category,
+  Expense,
+  ExpenseInput,
+  FormSelection,
+  PaymentMode,
+  SplitMode,
+  Subscription,
+  SubscriptionFrequency,
+  Tab,
+} from "./types";
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -35,6 +52,7 @@ let expenses: Expense[] = [];
 let cards: Card[] = [];
 let modes: PaymentMode[] = [];
 let categories: Category[] = [];
+let subscriptions: Subscription[] = [];
 let editingId: string | null = null;
 let openRow: string | null = null;
 const sel: FormSelection = {
@@ -42,6 +60,7 @@ const sel: FormSelection = {
   mode: "UPI",
   recurring: false,
   emi: false,
+  subFrequency: "monthly",
   split: false,
   splitMode: "no",
 };
@@ -124,10 +143,11 @@ function titleCase(name: string): string {
 }
 
 async function fetchLookups(): Promise<void> {
-  const [c, m, cat] = await Promise.all([fetchCards(), fetchPaymentModes(), fetchCategories()]);
+  const [c, m, cat, subs] = await Promise.all([fetchCards(), fetchPaymentModes(), fetchCategories(), fetchSubscriptions()]);
   cards = c;
   modes = m;
   categories = cat;
+  subscriptions = subs;
   if (modes.length && !modes.some((x) => x.name === sel.mode)) sel.mode = modes[0]!.name;
   renderModeChips();
   renderCardOptions();
@@ -135,7 +155,59 @@ async function fetchLookups(): Promise<void> {
   renderCardManageList();
   renderCategoryOptions();
   renderCategoryManageList();
+  renderSubscriptionManageList();
   paintChips();
+}
+
+/**
+ * Generates any expense rows an active subscription is due for (possibly
+ * several, if the app hasn't been opened in a while), advancing each
+ * subscription's `next_due` as it goes. Runs on every boot so a
+ * subscription auto-renews without anyone re-entering it.
+ */
+async function runSubscriptionCatchup(): Promise<void> {
+  const subs = await fetchSubscriptions();
+  const today = todayStr();
+  let generatedAny = false;
+  for (const s of subs) {
+    if (!s.active) continue;
+    let next = s.next_due;
+    let skip = s.skip_next;
+    let iterations = 0;
+    while (next <= today && iterations < 60) {
+      iterations++;
+      if (skip) {
+        skip = false;
+      } else {
+        const rec: ExpenseInput = {
+          amount: s.amount,
+          description: s.description,
+          date: next,
+          category: s.category,
+          paid_by: s.paid_by,
+          mode: s.mode,
+          card: s.card,
+          recurring: true,
+          note: s.note,
+          split: false,
+          share_p0: null,
+          share_p1: null,
+          emi: false,
+          emi_months: null,
+          emi_index: null,
+          subscription_id: s.id,
+        };
+        await dbInsertGeneratedExpense(rec);
+        generatedAny = true;
+      }
+      next = addInterval(next, s.frequency, 1);
+    }
+    if (next !== s.next_due || skip !== s.skip_next) {
+      await dbUpdateSubscription(s.id, { next_due: next, skip_next: skip });
+    }
+  }
+  if (generatedAny) await fetchAll();
+  await fetchLookups();
 }
 
 let booted = false;
@@ -143,12 +215,14 @@ function boot(): void {
   if (booted) {
     void fetchAll();
     void fetchLookups();
+    void runSubscriptionCatchup();
     return;
   }
   booted = true;
   buildStaticControls();
   void fetchLookups();
   void fetchAll();
+  void runSubscriptionCatchup();
   subscribeToExpenseChanges(() => void fetchAll());
   subscribeToLookupChanges(() => void fetchLookups());
 }
@@ -184,26 +258,84 @@ async function saveExpense(): Promise<void> {
   if (isCard && cardName && !cards.some((c) => c.name.toLowerCase() === cardName.toLowerCase())) {
     void dbInsertCard(cardName);
   }
-  const rec: ExpenseInput = {
+  const date = $<HTMLInputElement>("fDate").value || todayStr();
+  const category = $<HTMLSelectElement>("fCat").value;
+  const paidBy = PEOPLE[sel.paidBy].name;
+  const note = $<HTMLInputElement>("fNote").value.trim();
+  const isEmi = sel.recurring && sel.emi;
+  const emiMonths = isEmi ? parseInt($<HTMLInputElement>("fEmiMonths").value, 10) || null : null;
+  const base = {
     amount,
     description,
-    date: $<HTMLInputElement>("fDate").value || todayStr(),
-    category: $<HTMLSelectElement>("fCat").value,
-    paid_by: PEOPLE[sel.paidBy].name,
+    category,
+    paid_by: paidBy,
     mode: sel.mode,
     card: cardName,
-    recurring: sel.recurring,
-    note: $<HTMLInputElement>("fNote").value.trim(),
+    note,
     split: sel.split,
     share_p0: sel.split ? share_p0 : null,
     share_p1: sel.split ? share_p1 : null,
-    emi: sel.recurring && sel.emi,
-    emi_months: sel.recurring && sel.emi ? parseInt($<HTMLInputElement>("fEmiMonths").value, 10) || null : null,
   };
+
   const saveBtn = $<HTMLButtonElement>("saveBtn");
   saveBtn.disabled = true;
   saveBtn.textContent = "Saving…";
-  const error = editingId ? await dbUpdateExpense(editingId, rec) : await insertExpense(rec);
+
+  let error: string | null;
+  if (editingId) {
+    const existing = expenses.find((x) => x.id === editingId);
+    const rec: ExpenseInput = {
+      ...base,
+      date,
+      recurring: sel.recurring,
+      emi: isEmi,
+      emi_months: emiMonths,
+      emi_index: existing?.emi_index ?? null,
+      subscription_id: existing?.subscription_id ?? null,
+    };
+    error = await dbUpdateExpense(editingId, rec);
+  } else if (isEmi && emiMonths && emiMonths > 0) {
+    // Generate the full EMI schedule now, one row per month.
+    const recs: ExpenseInput[] = Array.from({ length: emiMonths }, (_, i) => ({
+      ...base,
+      date: addInterval(date, "monthly", i),
+      recurring: true,
+      emi: true,
+      emi_months: emiMonths,
+      emi_index: i + 1,
+      subscription_id: null,
+    }));
+    error = await dbInsertExpensesBulk(recs);
+  } else {
+    const rec: ExpenseInput = {
+      ...base,
+      date,
+      recurring: sel.recurring,
+      emi: false,
+      emi_months: null,
+      emi_index: null,
+      subscription_id: null,
+    };
+    error = await insertExpense(rec);
+    if (!error && sel.recurring) {
+      // Register the recurring rule so future occurrences auto-generate.
+      const subError = await dbInsertSubscription({
+        description,
+        amount,
+        category,
+        paid_by: paidBy,
+        mode: sel.mode,
+        card: cardName,
+        note,
+        frequency: sel.subFrequency,
+        next_due: addInterval(date, sel.subFrequency, 1),
+        active: true,
+        skip_next: false,
+      });
+      if (subError) alert("Expense saved, but couldn't schedule future auto-renewals: " + subError);
+    }
+  }
+
   saveBtn.textContent = editingId ? "Save changes" : "Add expense";
   if (error) {
     alert("Could not save: " + error);
@@ -212,6 +344,7 @@ async function saveExpense(): Promise<void> {
   }
   resetForm();
   await fetchAll();
+  await fetchLookups();
 }
 
 async function deleteExpenseFlow(id: string): Promise<void> {
@@ -312,6 +445,26 @@ async function deleteCategoryFlow(id: string): Promise<void> {
   await fetchLookups();
 }
 
+async function skipSubscriptionFlow(id: string): Promise<void> {
+  const error = await dbUpdateSubscription(id, { skip_next: true });
+  if (error) {
+    alert("Could not update: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
+async function stopSubscriptionFlow(id: string): Promise<void> {
+  const s = subscriptions.find((x) => x.id === id);
+  if (!s || !confirm(`Stop "${s.description}"? No further charges will be added automatically.`)) return;
+  const error = await dbUpdateSubscription(id, { active: false });
+  if (error) {
+    alert("Could not stop: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
 /* ---------------- form ---------------- */
 function buildStaticControls(): void {
   $("curSym").textContent = CURRENCY;
@@ -356,6 +509,19 @@ function buildStaticControls(): void {
   $("addCatBtn").addEventListener("click", () => void addCategory());
   $<HTMLInputElement>("newCatName").addEventListener("keydown", (e) => {
     if (e.key === "Enter") void addCategory();
+  });
+
+  $("fSubFreq").innerHTML =
+    `<button type="button" class="chip" data-freq="monthly">Monthly</button>` +
+    `<button type="button" class="chip" data-freq="yearly">Annually</button>`;
+  $("fSubFreq").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-freq]");
+    if (!b) return;
+    sel.subFrequency = b.dataset["freq"] as SubscriptionFrequency;
+    paintChips();
+  });
+  $("subManageBtn").addEventListener("click", () => {
+    $("subManagePanel").classList.toggle("hidden");
   });
 
   $("fRecurring").addEventListener("click", () => {
@@ -464,6 +630,16 @@ function buildStaticControls(): void {
       void deleteCategoryFlow(delCat.dataset["delCat"]!);
       return;
     }
+    const skipSub = target.closest<HTMLElement>("[data-skip-sub]");
+    if (skipSub) {
+      void skipSubscriptionFlow(skipSub.dataset["skipSub"]!);
+      return;
+    }
+    const stopSub = target.closest<HTMLElement>("[data-stop-sub]");
+    if (stopSub) {
+      void stopSubscriptionFlow(stopSub.dataset["stopSub"]!);
+      return;
+    }
     const row = target.closest<HTMLElement>("[data-row]");
     if (row) {
       openRow = openRow === row.dataset["row"] ? null : (row.dataset["row"] ?? null);
@@ -489,6 +665,10 @@ function paintChips(): void {
   $("fEmi").classList.toggle("on", sel.emi);
   $("fEmi").setAttribute("aria-pressed", String(sel.emi));
   $("emiMonthsWrap").classList.toggle("hidden", !(sel.recurring && sel.emi));
+  $("subFreqWrap").classList.toggle("hidden", !(sel.recurring && !sel.emi));
+  $("fSubFreq")
+    .querySelectorAll<HTMLElement>(".chip")
+    .forEach((b) => b.classList.toggle("on", b.dataset["freq"] === sel.subFrequency));
   $("fSplit")
     .querySelectorAll<HTMLElement>(".chip")
     .forEach((b) => b.classList.toggle("on", b.dataset["split"] === sel.splitMode));
@@ -539,6 +719,7 @@ function resetForm(): void {
   sel.mode = modes[0]?.name ?? sel.mode;
   sel.recurring = false;
   sel.emi = false;
+  sel.subFrequency = "monthly";
   sel.split = false;
   sel.splitMode = "no";
   const saveBtn = $<HTMLButtonElement>("saveBtn");
@@ -648,6 +829,31 @@ function renderCategoryManageList(): void {
     : `<span style="font-size:12.5px;color:var(--faint)">No categories yet.</span>`;
 }
 
+function renderSubscriptionManageList(): void {
+  const active = subscriptions.filter((s) => s.active);
+  $("subManageList").innerHTML = active.length
+    ? active
+        .map((s) => {
+          const due = new Date(s.next_due + "T00:00").toLocaleDateString("en", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          });
+          return `<div class="box" style="padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div>
+          <div style="font-weight:600;font-size:13.5px">${esc(s.description)}</div>
+          <div style="font-size:12px;color:var(--faint)">${CURRENCY}${fmt(s.amount)} · ${s.frequency === "monthly" ? "Monthly" : "Yearly"} · next ${s.skip_next ? "occurrence skipped, then " : ""}${due}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button type="button" class="smallbtn" data-skip-sub="${s.id}" ${s.skip_next ? "disabled" : ""}>${s.skip_next ? "Skipping…" : "Skip next"}</button>
+          <button type="button" class="smallbtn" style="color:var(--danger)" data-stop-sub="${s.id}">Stop</button>
+        </div>
+      </div>`;
+        })
+        .join("")
+    : `<span style="font-size:12.5px;color:var(--faint)">No active subscriptions.</span>`;
+}
+
 function months(): string[] {
   const s = new Set(expenses.map((x) => monthOf(x.date)));
   s.add(monthOf(todayStr()));
@@ -684,7 +890,7 @@ function rowHTML(x: Expense): string {
         ? `<div class="rowdetail">
         <span>${esc(x.mode)}${x.card ? " · " + esc(x.card) : ""}</span>
         ${x.split ? `<span>${splitLabel(x, PEOPLE, CURRENCY)}</span>` : ""}
-        ${x.emi ? `<span>EMI${x.emi_months ? ` · ${x.emi_months} months` : ""}</span>` : ""}
+        ${x.emi ? `<span>EMI${x.emi_index && x.emi_months ? ` · ${x.emi_index}/${x.emi_months}` : x.emi_months ? ` · ${x.emi_months} months` : ""}</span>` : ""}
         ${x.note ? `<span>"${esc(x.note)}"</span>` : ""}
         <span style="flex:1"></span>
         <button class="linkbtn" style="color:var(--green)" data-edit="${x.id}">Edit</button>

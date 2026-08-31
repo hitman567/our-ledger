@@ -1,6 +1,6 @@
 import { createClient, type Session } from "@supabase/supabase-js";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
-import type { AuditRow, Card, Category, Expense, ExpenseInput, PaymentMode } from "./types";
+import type { AuditRow, Card, Category, Expense, ExpenseInput, PaymentMode, Subscription } from "./types";
 
 export const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -38,6 +38,18 @@ export async function fetchAuditLog(): Promise<AuditRow[]> {
 export async function insertExpense(rec: ExpenseInput): Promise<string | null> {
   const { error } = await db.from("expenses").insert(rec);
   return error ? error.message : null;
+}
+
+export async function insertExpensesBulk(recs: ExpenseInput[]): Promise<string | null> {
+  const { error } = await db.from("expenses").insert(recs);
+  return error ? error.message : null;
+}
+
+/** Used by the subscription catch-up: ignores a unique-violation, since
+ * that just means another client already generated this occurrence. */
+export async function insertGeneratedExpense(rec: ExpenseInput): Promise<string | null> {
+  const { error } = await db.from("expenses").insert(rec);
+  return error && error.code !== "23505" ? error.message : null;
 }
 
 export async function updateExpense(id: string, rec: ExpenseInput): Promise<string | null> {
@@ -101,10 +113,26 @@ export async function deleteCategory(id: string): Promise<string | null> {
   return error ? error.message : null;
 }
 
+export async function fetchSubscriptions(): Promise<Subscription[]> {
+  const { data } = await db.from("subscriptions").select("*").order("next_due");
+  return (data as Subscription[] | null) ?? [];
+}
+
+export async function insertSubscription(rec: Omit<Subscription, "id">): Promise<string | null> {
+  const { error } = await db.from("subscriptions").insert(rec);
+  return error ? error.message : null;
+}
+
+export async function updateSubscription(id: string, patch: Partial<Subscription>): Promise<string | null> {
+  const { error } = await db.from("subscriptions").update(patch).eq("id", id);
+  return error ? error.message : null;
+}
+
 export function subscribeToLookupChanges(cb: () => void): void {
   db.channel("lookups-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "cards" }, cb)
     .on("postgres_changes", { event: "*", schema: "public", table: "payment_modes" }, cb)
     .on("postgres_changes", { event: "*", schema: "public", table: "categories" }, cb)
+    .on("postgres_changes", { event: "*", schema: "public", table: "subscriptions" }, cb)
     .subscribe();
 }

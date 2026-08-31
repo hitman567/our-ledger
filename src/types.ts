@@ -24,6 +24,10 @@ export interface Expense {
   share_p1: number | null;
   emi: boolean;
   emi_months: number | null;
+  /** Which installment this row is, e.g. 3 of 12 (EMIs only). */
+  emi_index: number | null;
+  /** The subscription rule that auto-generated this row, if any. */
+  subscription_id: string | null;
 }
 
 /** Fields the app writes when creating or editing an expense. */
@@ -46,6 +50,28 @@ export interface PaymentMode {
 export interface Category {
   id: string;
   name: string;
+}
+
+export type SubscriptionFrequency = "monthly" | "yearly";
+
+/**
+ * A row from the `subscriptions` table — a recurring-expense rule the app
+ * checks on load, automatically inserting the next due occurrence(s) into
+ * `expenses` so it doesn't need to be re-entered by hand each period.
+ */
+export interface Subscription {
+  id: string;
+  description: string;
+  amount: number;
+  category: string;
+  paid_by: string;
+  mode: string;
+  card: string;
+  note: string;
+  frequency: SubscriptionFrequency;
+  next_due: string; // YYYY-MM-DD
+  active: boolean;
+  skip_next: boolean;
 }
 
 export type AuditAction = "INSERT" | "UPDATE" | "DELETE";
@@ -72,6 +98,7 @@ export interface FormSelection {
   mode: string;
   recurring: boolean;
   emi: boolean;
+  subFrequency: SubscriptionFrequency;
   split: boolean;
   splitMode: SplitMode;
 }

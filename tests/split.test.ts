@@ -26,6 +26,8 @@ function expense(overrides: Partial<Expense>): Expense {
     share_p1: null,
     emi: false,
     emi_months: null,
+    emi_index: null,
+    subscription_id: null,
     ...overrides,
   };
 }

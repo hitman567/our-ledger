@@ -160,6 +160,55 @@ where category is not null and trim(category) <> ''
 order by lower(category), created_at asc
 on conflict (lower(name)) do nothing;
 
+-- ============ SUBSCRIPTIONS ============
+-- Recurring-expense rules (monthly or yearly). The app checks these on
+-- load and automatically inserts the next due occurrence(s) into
+-- `expenses`, so a subscription doesn't need to be re-entered by hand
+-- each period. Stopping a subscription just marks it inactive; past
+-- occurrences it already created stay in the ledger.
+
+create table if not exists subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  description text not null,
+  amount numeric not null check (amount > 0),
+  category text not null,
+  paid_by text not null,
+  mode text not null,
+  card text default '',
+  note text default '',
+  frequency text not null check (frequency in ('monthly', 'yearly')),
+  next_due date not null,
+  active boolean not null default true,
+  skip_next boolean not null default false,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+
+alter table subscriptions enable row level security;
+
+drop policy if exists "authenticated users full access" on subscriptions;
+create policy "authenticated users full access"
+  on subscriptions for all
+  to authenticated
+  using (true)
+  with check (true);
+
+do $$ begin
+  alter publication supabase_realtime add table subscriptions;
+exception when duplicate_object then null;
+end $$;
+
+-- Which EMI installment a row is (e.g. 3 of 12), and which subscription
+-- rule auto-generated a row, if any (added later; safe to run again).
+alter table expenses add column if not exists emi_index integer;
+alter table expenses add column if not exists subscription_id uuid references subscriptions(id) on delete set null;
+
+-- Belt-and-braces: even if two clients catch up on the same subscription
+-- at the same moment, it can't produce two rows for the same date.
+create unique index if not exists expenses_subscription_date_idx
+  on expenses (subscription_id, date)
+  where subscription_id is not null;
+
 -- ============ AUDIT LOG ============
 -- Every add, edit, and delete is recorded automatically by the
 -- database itself. The app can only READ this log, never change it.

@@ -115,9 +115,15 @@
           </div>
           <div id="splitErr" style="font-size:12.5px;color:var(--danger);margin-top:6px"></div>
         </div>
-        <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
-          <button class="toggle" id="fRecurring" aria-pressed="false"><span></span></button>
-          <span style="font-size:14px;font-weight:600">Monthly subscription / recurring</span>
+        <div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="toggle" id="fRecurring" aria-pressed="false"><span></span></button>
+            <span style="font-size:14px;font-weight:600">Subscription / recurring</span>
+          </div>
+          <button type="button" class="linkbtn" id="subManageBtn">Manage</button>
+        </div>
+        <div id="subManagePanel" class="hidden" style="margin-top:10px">
+          <div id="subManageList"></div>
         </div>
         <div id="emiWrap" class="hidden" style="margin-top:14px">
           <div style="display:flex;align-items:center;gap:10px">
@@ -127,6 +133,10 @@
           <div id="emiMonthsWrap" class="hidden" style="margin-top:12px">
             <div class="label">Tenure (months)</div>
             <input class="input" id="fEmiMonths" inputmode="numeric" placeholder="e.g. 12" />
+          </div>
+          <div id="subFreqWrap" class="hidden" style="margin-top:12px">
+            <div class="label">Billing frequency</div>
+            <div class="chiprow" id="fSubFreq"></div>
           </div>
         </div>
         <div style="margin-top:14px">
