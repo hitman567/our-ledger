@@ -70,8 +70,10 @@ let histPerson = -1;
 let histCat = "All";
 let insMonth = monthOf(todayStr());
 let auditRows: AuditRow[] = [];
-let cycleCardId: string | null = null;
-let cycleEnd: string | null = null;
+let filterMode = "All";
+let filterCard = "All";
+let filterFrom = "";
+let filterTo = "";
 
 /* ---------------- auth ---------------- */
 function wireAuth(): void {
@@ -159,7 +161,7 @@ async function fetchLookups(): Promise<void> {
   renderCategoryOptions();
   renderCategoryManageList();
   renderSubscriptionManageList();
-  renderCardCycleBox();
+  renderFilterBox();
   paintChips();
 }
 
@@ -617,14 +619,29 @@ function buildStaticControls(): void {
     insMonth = (e.target as HTMLSelectElement).value;
     renderInsights();
   });
-  $<HTMLSelectElement>("cycleCard").addEventListener("change", (e) => {
-    cycleCardId = (e.target as HTMLSelectElement).value || null;
-    cycleEnd = null;
-    renderCardCycleBox();
+  $<HTMLSelectElement>("filterMode").addEventListener("change", (e) => {
+    filterMode = (e.target as HTMLSelectElement).value;
+    renderFilterBox();
   });
-  $<HTMLSelectElement>("cycleRange").addEventListener("change", (e) => {
-    cycleEnd = (e.target as HTMLSelectElement).value;
-    renderCardCycleBox();
+  $<HTMLSelectElement>("filterCard").addEventListener("change", (e) => {
+    filterCard = (e.target as HTMLSelectElement).value;
+    renderFilterBox();
+  });
+  $<HTMLInputElement>("filterFrom").addEventListener("change", (e) => {
+    filterFrom = (e.target as HTMLInputElement).value;
+    renderFilterBox();
+  });
+  $<HTMLInputElement>("filterTo").addEventListener("change", (e) => {
+    filterTo = (e.target as HTMLInputElement).value;
+    renderFilterBox();
+  });
+  $("useCycleBtn").addEventListener("click", () => {
+    const card = filterCard !== "All" ? cards.find((c) => c.name === filterCard) : undefined;
+    if (!card?.billing_date) return;
+    const cycle = currentCardCycle(card.billing_date);
+    filterFrom = cycle.start;
+    filterTo = cycle.end;
+    renderFilterBox();
   });
 
   document.querySelectorAll<HTMLElement>("nav [data-tab]").forEach((b) =>
@@ -1001,6 +1018,7 @@ function renderHistory(): void {
   $("histList").innerHTML = rows.map(rowHTML).join("") || `<div class="empty">Nothing matches these filters.</div>`;
 }
 
+/** The last ~13 billing cycles for a card, oldest first. */
 function cardCycles(billingDate: number): { start: string; end: string }[] {
   const [ty, tm] = todayStr().split("-").map(Number);
   const ends: string[] = [];
@@ -1016,60 +1034,62 @@ function cardCycles(billingDate: number): { start: string; end: string }[] {
   return sorted.slice(1).map((end, i) => ({ end, start: dayAfter(sorted[i]!) }));
 }
 
-function renderCardCycleBox(): void {
-  const withBilling = cards.filter((c) => c.billing_date != null);
-  const cardSel = $<HTMLSelectElement>("cycleCard");
-  const rangeSel = $<HTMLSelectElement>("cycleRange");
-  const body = $("cycleBody");
+function dateLabel(d: string): string {
+  return new Date(d + "T00:00").toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" });
+}
 
-  if (!withBilling.length) {
-    cardSel.innerHTML = `<option value="">No cards with a billing date set</option>`;
-    rangeSel.innerHTML = "";
-    body.innerHTML = `<div class="empty" style="padding:0">Set a billing date for a card under the card "Manage" panel to see its cycle spend here.</div>`;
-    return;
-  }
-  if (!cycleCardId || !withBilling.some((c) => c.id === cycleCardId)) cycleCardId = withBilling[0]!.id;
-  cardSel.innerHTML = withBilling
-    .map((c) => `<option value="${c.id}" ${c.id === cycleCardId ? "selected" : ""}>${esc(c.name)}</option>`)
-    .join("");
-
-  const card = withBilling.find((c) => c.id === cycleCardId)!;
-  const cycles = cardCycles(card.billing_date!);
+/** The billing cycle a card's current statement is accumulating in. */
+function currentCardCycle(billingDate: number): { start: string; end: string } {
+  const cycles = cardCycles(billingDate);
   const today = todayStr();
-  const currentIdx = cycles.findIndex((c) => today <= c.end);
-  const current = cycles[currentIdx >= 0 ? currentIdx : cycles.length - 1]!;
-  if (!cycleEnd || !cycles.some((c) => c.end === cycleEnd)) cycleEnd = current.end;
+  const idx = cycles.findIndex((c) => today <= c.end);
+  return cycles[idx >= 0 ? idx : cycles.length - 1]!;
+}
 
-  const dateLabel = (d: string, withYear = true) =>
-    new Date(d + "T00:00").toLocaleDateString("en", {
-      day: "numeric",
-      month: "short",
-      ...(withYear ? { year: "numeric" as const } : {}),
-    });
-  rangeSel.innerHTML = [...cycles]
-    .reverse()
-    .map(
-      (c) =>
-        `<option value="${c.end}" ${c.end === cycleEnd ? "selected" : ""}>${dateLabel(c.start, false)} – ${dateLabel(c.end)}${c.end === current.end ? " (current)" : ""}</option>`,
-    )
-    .join("");
+function renderFilterBox(): void {
+  const modeSel = $<HTMLSelectElement>("filterMode");
+  modeSel.innerHTML = `<option value="All">All payment modes</option>` + modes.map((m) => `<option value="${esc(m.name)}">${esc(m.name)}</option>`).join("");
+  modeSel.value = filterMode === "All" || modes.some((m) => m.name === filterMode) ? filterMode : "All";
+  filterMode = modeSel.value;
 
-  const cycle = cycles.find((c) => c.end === cycleEnd)!;
-  const rows = expenses.filter(
-    (x) => x.card.toLowerCase() === card.name.toLowerCase() && x.date >= cycle.start && x.date <= cycle.end,
-  );
+  const cardSel = $<HTMLSelectElement>("filterCard");
+  cardSel.innerHTML = `<option value="All">All cards</option>` + cards.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+  cardSel.value = filterCard === "All" || cards.some((c) => c.name === filterCard) ? filterCard : "All";
+  filterCard = cardSel.value;
+
+  const fromEl = $<HTMLInputElement>("filterFrom");
+  const toEl = $<HTMLInputElement>("filterTo");
+  if (!filterFrom) filterFrom = monthOf(todayStr()) + "-01";
+  if (!filterTo) filterTo = todayStr();
+  fromEl.value = filterFrom;
+  toEl.value = filterTo;
+
+  const selectedCard = filterCard !== "All" ? cards.find((c) => c.name === filterCard) : undefined;
+  $("useCycleBtn").classList.toggle("hidden", !selectedCard?.billing_date);
+
+  let dueInfo = "";
+  if (selectedCard?.billing_date && selectedCard.due_date) {
+    const cycle = currentCardCycle(selectedCard.billing_date);
+    dueInfo = ` · current cycle due ${dateLabel(dueDateFor(cycle.end, selectedCard.billing_date, selectedCard.due_date))}`;
+  }
+
+  const rows = expenses.filter((x) => {
+    if (filterMode !== "All" && x.mode !== filterMode) return false;
+    if (filterCard !== "All" && x.card.toLowerCase() !== filterCard.toLowerCase()) return false;
+    if (filterFrom && x.date < filterFrom) return false;
+    if (filterTo && x.date > filterTo) return false;
+    return true;
+  });
   const total = rows.reduce((s, x) => s + Number(x.amount), 0);
-  const dueLabel = card.due_date ? dateLabel(dueDateFor(cycle.end, card.billing_date!, card.due_date)) : null;
-
-  body.innerHTML = `
+  $("filterBody").innerHTML = `
     <div class="mono" style="font-size:26px;font-weight:700">${CURRENCY}${fmt(total)}</div>
-    <div class="rowsub" style="margin-top:2px">${rows.length} ${rows.length === 1 ? "charge" : "charges"} on ${esc(card.name)}${dueLabel ? ` · due ${dueLabel}` : ""}</div>
-    <div class="listbox" style="margin-top:12px">${rows.map(rowHTML).join("") || `<div class="empty">No charges in this cycle.</div>`}</div>`;
+    <div class="rowsub" style="margin-top:2px">${rows.length} ${rows.length === 1 ? "expense" : "expenses"}${dueInfo}</div>
+    <div class="listbox" style="margin-top:12px">${rows.map(rowHTML).join("") || `<div class="empty">No expenses match these filters.</div>`}</div>`;
 }
 
 function renderInsights(): void {
   fillMonthSelect($<HTMLSelectElement>("insMonth"), insMonth);
-  renderCardCycleBox();
+  renderFilterBox();
   const rows = expenses.filter((x) => monthOf(x.date) === insMonth);
   const total = rows.reduce((s, x) => s + Number(x.amount), 0);
   const byP: [number, number] = [0, 1].map((i) =>
