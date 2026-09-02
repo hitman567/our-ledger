@@ -122,9 +122,6 @@
           </div>
           <button type="button" class="linkbtn" id="subManageBtn">Manage</button>
         </div>
-        <div id="subManagePanel" class="hidden" style="margin-top:10px">
-          <div id="subManageList"></div>
-        </div>
         <div id="emiWrap" class="hidden" style="margin-top:14px">
           <div style="display:flex;align-items:center;gap:10px">
             <button class="toggle" id="fEmi" aria-pressed="false"><span></span></button>
@@ -181,6 +178,16 @@
         <div id="filterBody" style="margin-top:12px"></div>
       </div>
     </section>
+    <!-- RECURRING -->
+    <section id="pane-subscriptions" class="hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="label" style="margin:0">Active</div>
+        <button type="button" class="linkbtn" id="backfillSubsBtn">Enable auto-renew for existing recurring expenses</button>
+      </div>
+      <div id="subsActiveList"></div>
+      <div class="label" style="margin-top:20px">Stopped</div>
+      <div id="subsStoppedList"></div>
+    </section>
     <!-- AUDIT LOG -->
     <section id="pane-audit" class="hidden">
       <div class="label">Change log — every add, edit &amp; delete</div>
@@ -193,6 +200,7 @@
       <button data-tab="add" class="on">＋ Add</button>
       <button data-tab="history">History</button>
       <button data-tab="insights">Insights</button>
+      <button data-tab="subscriptions">Recurring</button>
       <button data-tab="audit">Log</button>
     </div>
   </nav>

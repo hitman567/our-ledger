@@ -97,7 +97,7 @@ export interface AuditRow {
 
 export type SplitMode = "no" | "equal" | "custom";
 
-export type Tab = "add" | "history" | "insights" | "audit";
+export type Tab = "add" | "history" | "insights" | "subscriptions" | "audit";
 
 /** Transient state of the add/edit form. */
 export interface FormSelection {

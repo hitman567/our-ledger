@@ -160,7 +160,7 @@ async function fetchLookups(): Promise<void> {
   renderCardManageList();
   renderCategoryOptions();
   renderCategoryManageList();
-  renderSubscriptionManageList();
+  renderSubscriptionsPage();
   renderFilterBox();
   paintChips();
 }
@@ -486,6 +486,109 @@ async function stopSubscriptionFlow(id: string): Promise<void> {
   await fetchLookups();
 }
 
+/** Resumes a stopped subscription, skipping past any periods it missed
+ * while inactive rather than immediately generating a backlog of charges. */
+async function resumeSubscriptionFlow(id: string): Promise<void> {
+  const s = subscriptions.find((x) => x.id === id);
+  if (!s) return;
+  const today = todayStr();
+  let next = s.next_due;
+  while (next < today) next = addInterval(next, s.frequency, 1);
+  const error = await dbUpdateSubscription(id, { active: true, next_due: next });
+  if (error) {
+    alert("Could not resume: " + error);
+    return;
+  }
+  await fetchLookups();
+}
+
+async function updateSubscriptionFieldFlow(id: string, field: string, raw: string): Promise<void> {
+  let patch: Partial<Subscription>;
+  if (field === "amount") {
+    const n = parseFloat(raw);
+    if (!(n > 0)) {
+      alert("Amount must be greater than 0.");
+      await fetchLookups();
+      return;
+    }
+    patch = { amount: n };
+  } else if (field === "description") {
+    if (!raw.trim()) {
+      await fetchLookups();
+      return;
+    }
+    patch = { description: raw.trim() };
+  } else if (field === "category") {
+    patch = { category: raw };
+  } else if (field === "paid_by") {
+    patch = { paid_by: raw };
+  } else if (field === "frequency") {
+    patch = { frequency: raw as SubscriptionFrequency };
+  } else if (field === "next_due") {
+    if (!raw) {
+      await fetchLookups();
+      return;
+    }
+    patch = { next_due: raw };
+  } else {
+    return;
+  }
+  const error = await dbUpdateSubscription(id, patch);
+  if (error) alert("Could not save: " + error);
+  await fetchLookups();
+}
+
+/**
+ * One-time fix for recurring expenses added before subscription rules
+ * existed: finds each such expense (grouped by description, payer,
+ * category, mode and card, keeping the most recent occurrence per group)
+ * that has no matching active subscription yet, and creates one so it
+ * starts auto-renewing monthly going forward.
+ */
+async function backfillSubscriptionsFlow(): Promise<void> {
+  const groups = new Map<string, Expense>();
+  for (const x of expenses) {
+    if (!x.recurring || x.emi || x.subscription_id) continue;
+    const key = `${x.description.toLowerCase()}|${x.paid_by}|${x.category}|${x.mode}|${x.card.toLowerCase()}`;
+    const existing = groups.get(key);
+    if (!existing || x.date > existing.date) groups.set(key, x);
+  }
+  const toCreate = [...groups.values()].filter(
+    (x) => !subscriptions.some((s) => s.active && s.description.toLowerCase() === x.description.toLowerCase() && s.paid_by === x.paid_by),
+  );
+  if (!toCreate.length) {
+    alert("Nothing to fix — every recurring expense already has an active auto-renew rule.");
+    return;
+  }
+  const names = toCreate.map((x) => `${x.description} (${x.paid_by})`).join(", ");
+  if (
+    !confirm(
+      `Enable monthly auto-renew for ${toCreate.length} existing recurring expense${toCreate.length === 1 ? "" : "s"}?\n\n${names}\n\nIf any of these should renew yearly instead, stop it under "Manage" afterward and re-add it with the right frequency.`,
+    )
+  )
+    return;
+  for (const x of toCreate) {
+    await dbInsertSubscription({
+      description: x.description,
+      amount: x.amount,
+      category: x.category,
+      paid_by: x.paid_by,
+      mode: x.mode,
+      card: x.card,
+      note: x.note,
+      frequency: "monthly",
+      next_due: addInterval(x.date, "monthly", 1),
+      active: true,
+      skip_next: false,
+      split: x.split,
+      share_p0: x.share_p0,
+      share_p1: x.share_p1,
+    });
+  }
+  await runSubscriptionCatchup();
+  alert(`Enabled auto-renew for ${toCreate.length} expense${toCreate.length === 1 ? "" : "s"}.`);
+}
+
 /* ---------------- form ---------------- */
 function buildStaticControls(): void {
   $("curSym").textContent = CURRENCY;
@@ -541,9 +644,8 @@ function buildStaticControls(): void {
     sel.subFrequency = b.dataset["freq"] as SubscriptionFrequency;
     paintChips();
   });
-  $("subManageBtn").addEventListener("click", () => {
-    $("subManagePanel").classList.toggle("hidden");
-  });
+  $("subManageBtn").addEventListener("click", () => switchTab("subscriptions"));
+  $("backfillSubsBtn").addEventListener("click", () => void backfillSubscriptionsFlow());
 
   $("fRecurring").addEventListener("click", () => {
     sel.recurring = !sel.recurring;
@@ -685,6 +787,11 @@ function buildStaticControls(): void {
       void stopSubscriptionFlow(stopSub.dataset["stopSub"]!);
       return;
     }
+    const resumeSub = target.closest<HTMLElement>("[data-resume-sub]");
+    if (resumeSub) {
+      void resumeSubscriptionFlow(resumeSub.dataset["resumeSub"]!);
+      return;
+    }
     const row = target.closest<HTMLElement>("[data-row]");
     if (row) {
       openRow = openRow === row.dataset["row"] ? null : (row.dataset["row"] ?? null);
@@ -702,6 +809,13 @@ function buildStaticControls(): void {
     const due = target.closest<HTMLInputElement>("[data-card-due]");
     if (due) {
       void updateCardDateFlow(due.dataset["cardDue"]!, "due_date", due.value);
+      return;
+    }
+    const subField = target.closest<HTMLElement>("[data-sub-field]");
+    if (subField) {
+      const id = subField.dataset["subId"]!;
+      const field = subField.dataset["subField"]!;
+      void updateSubscriptionFieldFlow(id, field, (subField as HTMLInputElement | HTMLSelectElement).value);
       return;
     }
   });
@@ -831,6 +945,7 @@ function switchTab(t: Tab): void {
   $("pane-add").classList.toggle("hidden", t !== "add");
   $("pane-history").classList.toggle("hidden", t !== "history");
   $("pane-insights").classList.toggle("hidden", t !== "insights");
+  $("pane-subscriptions").classList.toggle("hidden", t !== "subscriptions");
   $("pane-audit").classList.toggle("hidden", t !== "audit");
   renderAll();
 }
@@ -903,29 +1018,77 @@ function renderCategoryManageList(): void {
     : `<span style="font-size:12.5px;color:var(--faint)">No categories yet.</span>`;
 }
 
-function renderSubscriptionManageList(): void {
+function subscriptionEditRow(s: Subscription): string {
+  const dueLabel = new Date(s.next_due + "T00:00").toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" });
+  return `<div class="box" style="padding:12px 14px;margin-bottom:10px">
+    <div class="two">
+      <div>
+        <div class="label" style="font-size:11px">Description</div>
+        <input class="input" data-sub-id="${s.id}" data-sub-field="description" value="${esc(s.description)}" />
+      </div>
+      <div>
+        <div class="label" style="font-size:11px">Amount</div>
+        <input class="input" type="number" step="0.01" min="0.01" data-sub-id="${s.id}" data-sub-field="amount" value="${s.amount}" />
+      </div>
+    </div>
+    <div class="two" style="margin-top:8px">
+      <div>
+        <div class="label" style="font-size:11px">Category</div>
+        <select class="input" data-sub-id="${s.id}" data-sub-field="category">
+          ${categories.map((c) => `<option ${c.name === s.category ? "selected" : ""}>${esc(c.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <div class="label" style="font-size:11px">Paid by</div>
+        <select class="input" data-sub-id="${s.id}" data-sub-field="paid_by">
+          ${PEOPLE.map((p) => `<option ${p.name === s.paid_by ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="two" style="margin-top:8px">
+      <div>
+        <div class="label" style="font-size:11px">Frequency</div>
+        <select class="input" data-sub-id="${s.id}" data-sub-field="frequency">
+          <option value="monthly" ${s.frequency === "monthly" ? "selected" : ""}>Monthly</option>
+          <option value="yearly" ${s.frequency === "yearly" ? "selected" : ""}>Yearly</option>
+        </select>
+      </div>
+      <div>
+        <div class="label" style="font-size:11px">Next due</div>
+        <input class="input" type="date" data-sub-id="${s.id}" data-sub-field="next_due" value="${s.next_due}" />
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px">
+      <span style="font-size:11.5px;color:var(--faint)">${s.skip_next ? "Next charge will be skipped" : `Due ${dueLabel}`}</span>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button type="button" class="smallbtn" data-skip-sub="${s.id}" ${s.skip_next ? "disabled" : ""}>${s.skip_next ? "Skipping…" : "Skip next"}</button>
+        <button type="button" class="smallbtn" style="color:var(--danger)" data-stop-sub="${s.id}">Stop</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSubscriptionsPage(): void {
   const active = subscriptions.filter((s) => s.active);
-  $("subManageList").innerHTML = active.length
-    ? active
-        .map((s) => {
-          const due = new Date(s.next_due + "T00:00").toLocaleDateString("en", {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-          });
-          return `<div class="box" style="padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+  const stopped = subscriptions.filter((s) => !s.active);
+
+  $("subsActiveList").innerHTML = active.length
+    ? active.map(subscriptionEditRow).join("")
+    : `<div class="empty">No active recurring bills.</div>`;
+
+  $("subsStoppedList").innerHTML = stopped.length
+    ? stopped
+        .map(
+          (s) => `<div class="box" style="padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
         <div>
-          <div style="font-weight:600;font-size:13.5px">${esc(s.description)}</div>
-          <div style="font-size:12px;color:var(--faint)">${CURRENCY}${fmt(s.amount)} · ${s.frequency === "monthly" ? "Monthly" : "Yearly"} · next ${s.skip_next ? "occurrence skipped, then " : ""}${due}</div>
+          <div style="font-weight:600;font-size:13.5px">${esc(s.description)} <span style="color:var(--faint);font-weight:400">(${esc(s.paid_by)})</span></div>
+          <div style="font-size:12px;color:var(--faint)">${CURRENCY}${fmt(s.amount)} · ${s.frequency === "monthly" ? "Monthly" : "Yearly"}</div>
         </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          <button type="button" class="smallbtn" data-skip-sub="${s.id}" ${s.skip_next ? "disabled" : ""}>${s.skip_next ? "Skipping…" : "Skip next"}</button>
-          <button type="button" class="smallbtn" style="color:var(--danger)" data-stop-sub="${s.id}">Stop</button>
-        </div>
-      </div>`;
-        })
+        <button type="button" class="smallbtn" data-resume-sub="${s.id}">Resume</button>
+      </div>`,
+        )
         .join("")
-    : `<span style="font-size:12.5px;color:var(--faint)">No active subscriptions.</span>`;
+    : `<div class="empty">No stopped subscriptions.</div>`;
 }
 
 function months(): string[] {
@@ -1259,6 +1422,7 @@ function renderAll(): void {
   renderHeader();
   renderLists();
   renderInsights();
+  renderSubscriptionsPage();
   renderAudit();
 }
 
