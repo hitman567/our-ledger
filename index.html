@@ -180,13 +180,14 @@
     </section>
     <!-- RECURRING -->
     <section id="pane-subscriptions" class="hidden">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div class="label" style="margin:0">Active</div>
-        <button type="button" class="linkbtn" id="backfillSubsBtn">Enable auto-renew for existing recurring expenses</button>
+      <div id="subsBanner"></div>
+      <div class="chiprow" id="subsPayerFilter" style="margin-bottom:14px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+        <div class="label" style="margin:0">Active &middot; <span id="subsActiveCount"></span></div>
+        <div class="rowsub" style="margin:0">&#8377;<span id="subsActiveTotal"></span>/mo</div>
       </div>
-      <div id="subsActiveList"></div>
-      <div class="label" style="margin-top:20px">Stopped</div>
-      <div id="subsStoppedList"></div>
+      <div class="listbox" id="subsActiveList" style="margin-bottom:20px"></div>
+      <div id="subsStoppedWrap"></div>
     </section>
     <!-- AUDIT LOG -->
     <section id="pane-audit" class="hidden">

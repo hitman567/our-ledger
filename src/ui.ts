@@ -483,6 +483,7 @@ async function stopSubscriptionFlow(id: string): Promise<void> {
     alert("Could not stop: " + error);
     return;
   }
+  if (subsExpandedId === id) subsExpandedId = null;
   await fetchLookups();
 }
 
@@ -645,7 +646,6 @@ function buildStaticControls(): void {
     paintChips();
   });
   $("subManageBtn").addEventListener("click", () => switchTab("subscriptions"));
-  $("backfillSubsBtn").addEventListener("click", () => void backfillSubscriptionsFlow());
 
   $("fRecurring").addEventListener("click", () => {
     sel.recurring = !sel.recurring;
@@ -790,6 +790,29 @@ function buildStaticControls(): void {
     const resumeSub = target.closest<HTMLElement>("[data-resume-sub]");
     if (resumeSub) {
       void resumeSubscriptionFlow(resumeSub.dataset["resumeSub"]!);
+      return;
+    }
+    const subPayerBtn = target.closest<HTMLElement>("[data-sub-payer]");
+    if (subPayerBtn) {
+      void updateSubscriptionFieldFlow(subPayerBtn.dataset["subPayer"]!, "paid_by", subPayerBtn.dataset["payerName"]!);
+      return;
+    }
+    const subFreqBtn = target.closest<HTMLElement>("[data-sub-freq]");
+    if (subFreqBtn) {
+      void updateSubscriptionFieldFlow(subFreqBtn.dataset["subFreq"]!, "frequency", subFreqBtn.dataset["freqValue"]!);
+      return;
+    }
+    const payerFilterBtn = target.closest<HTMLElement>("[data-payer-filter]");
+    if (payerFilterBtn) {
+      subsPayerFilter = payerFilterBtn.dataset["payerFilter"]!;
+      renderSubscriptionsPage();
+      return;
+    }
+    const subRow = target.closest<HTMLElement>("[data-sub-row]");
+    if (subRow) {
+      const id = subRow.dataset["subRow"]!;
+      subsExpandedId = subsExpandedId === id ? null : id;
+      renderSubscriptionsPage();
       return;
     }
     const row = target.closest<HTMLElement>("[data-row]");
@@ -1018,77 +1041,160 @@ function renderCategoryManageList(): void {
     : `<span style="font-size:12.5px;color:var(--faint)">No categories yet.</span>`;
 }
 
-function subscriptionEditRow(s: Subscription): string {
-  const dueLabel = new Date(s.next_due + "T00:00").toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" });
-  return `<div class="box" style="padding:12px 14px;margin-bottom:10px">
-    <div class="two">
-      <div>
-        <div class="label" style="font-size:11px">Description</div>
-        <input class="input" data-sub-id="${s.id}" data-sub-field="description" value="${esc(s.description)}" />
+const SUB_ICONS: Record<string, string> = {
+  home: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9h12v-9"/></svg>`,
+  wifi: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5.5 12.3a10 10 0 0 1 13 0"/><path d="M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1" fill="currentColor" stroke="none"/></svg>`,
+  play: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5Z" fill="currentColor" stroke="none"/></svg>`,
+  cloud: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H7a4 4 0 1 1 .4-7.98A5.5 5.5 0 0 1 18 12.5a3.5 3.5 0 0 1-.5 6.5Z"/></svg>`,
+  heart: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5c-3.8-2.3-7.5-5.4-7.5-9.4a4.1 4.1 0 0 1 7.5-2.3 4.1 4.1 0 0 1 7.5 2.3c0 4-3.7 7.1-7.5 9.4Z"/></svg>`,
+  spark: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3c.6 3.8 1.4 5.6 3 7.2 1.6 1.6 3.4 2.4 7.2 3-3.8.6-5.6 1.4-7.2 3-1.6 1.6-2.4 3.4-3 7.2-.6-3.8-1.4-5.6-3-7.2-1.6-1.6-3.4-2.4-7.2-3 3.8-.6 5.6-1.4 7.2-3 1.6-1.6 2.4-3.4 3-7.2Z"/></svg>`,
+};
+const CATEGORY_ICON: Record<string, keyof typeof SUB_ICONS> = {
+  "Rent & Home": "home",
+  "Utilities & Bills": "wifi",
+  Entertainment: "play",
+  Subscriptions: "cloud",
+  Health: "heart",
+};
+const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
+const INFO_SVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>`;
+
+function iconFor(category: string): string {
+  return SUB_ICONS[CATEGORY_ICON[category] ?? "spark"]!;
+}
+
+let subsExpandedId: string | null = null;
+let subsPayerFilter = "All";
+
+function pendingBackfillCount(): number {
+  const groups = new Map<string, Expense>();
+  for (const x of expenses) {
+    if (!x.recurring || x.emi || x.subscription_id) continue;
+    const key = `${x.description.toLowerCase()}|${x.paid_by}|${x.category}|${x.mode}|${x.card.toLowerCase()}`;
+    const existing = groups.get(key);
+    if (!existing || x.date > existing.date) groups.set(key, x);
+  }
+  return [...groups.values()].filter(
+    (x) => !subscriptions.some((s) => s.active && s.description.toLowerCase() === x.description.toLowerCase() && s.paid_by === x.paid_by),
+  ).length;
+}
+
+function subscriptionRowHTML(s: Subscription): string {
+  const expanded = subsExpandedId === s.id;
+  const i = personIdx(s.paid_by, PEOPLE);
+  const dueLabel = new Date(s.next_due + "T00:00").toLocaleDateString("en", { day: "numeric", month: "short" });
+  const dueText = (s.skip_next ? "Skipping next, then " : "Due ") + dueLabel;
+  let html = `<div class="row">
+    <div class="rowmain" data-sub-row="${s.id}">
+      <span class="rowbar" style="background:var(--p${i})"></span>
+      <div class="iconc">${iconFor(s.category)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="rowdesc">${esc(s.description)} <span style="color:var(--p${i});font-weight:700;font-size:11.5px">&middot; ${esc(s.paid_by)}</span></div>
+        <div class="rowsub">${s.frequency === "monthly" ? "Monthly" : "Yearly"} &middot; ${dueText}</div>
       </div>
-      <div>
-        <div class="label" style="font-size:11px">Amount</div>
-        <input class="input" type="number" step="0.01" min="0.01" data-sub-id="${s.id}" data-sub-field="amount" value="${s.amount}" />
+      <div class="rowamt">${CURRENCY}${fmt(s.amount)}</div>
+      <div class="chev${expanded ? " open" : ""}">${CHEVRON_SVG}</div>
+    </div>`;
+  if (expanded) {
+    html += `<div class="detail">
+      <div class="two">
+        <div>
+          <div class="label">Description</div>
+          <input class="input" data-sub-id="${s.id}" data-sub-field="description" value="${esc(s.description)}" />
+        </div>
+        <div>
+          <div class="label">Amount</div>
+          <input class="input mono" type="number" step="0.01" min="0.01" data-sub-id="${s.id}" data-sub-field="amount" value="${s.amount}" />
+        </div>
       </div>
-    </div>
-    <div class="two" style="margin-top:8px">
-      <div>
-        <div class="label" style="font-size:11px">Category</div>
+      <div style="margin-top:10px">
+        <div class="label">Category</div>
         <select class="input" data-sub-id="${s.id}" data-sub-field="category">
           ${categories.map((c) => `<option ${c.name === s.category ? "selected" : ""}>${esc(c.name)}</option>`).join("")}
         </select>
       </div>
-      <div>
-        <div class="label" style="font-size:11px">Paid by</div>
-        <select class="input" data-sub-id="${s.id}" data-sub-field="paid_by">
-          ${PEOPLE.map((p) => `<option ${p.name === s.paid_by ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
-        </select>
+      <div class="two" style="margin-top:10px">
+        <div>
+          <div class="label">Paid by</div>
+          <div style="display:flex;gap:8px">
+            ${PEOPLE.map(
+              (p, idx) =>
+                `<button type="button" class="chip ${s.paid_by === p.name ? `on c${idx}` : ""}" data-sub-payer="${s.id}" data-payer-name="${esc(p.name)}">${esc(p.name)}</button>`,
+            ).join("")}
+          </div>
+        </div>
+        <div>
+          <div class="label">Frequency</div>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="chip ${s.frequency === "monthly" ? "on" : ""}" data-sub-freq="${s.id}" data-freq-value="monthly">Monthly</button>
+            <button type="button" class="chip ${s.frequency === "yearly" ? "on" : ""}" data-sub-freq="${s.id}" data-freq-value="yearly">Yearly</button>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="two" style="margin-top:8px">
-      <div>
-        <div class="label" style="font-size:11px">Frequency</div>
-        <select class="input" data-sub-id="${s.id}" data-sub-field="frequency">
-          <option value="monthly" ${s.frequency === "monthly" ? "selected" : ""}>Monthly</option>
-          <option value="yearly" ${s.frequency === "yearly" ? "selected" : ""}>Yearly</option>
-        </select>
-      </div>
-      <div>
-        <div class="label" style="font-size:11px">Next due</div>
+      <div style="margin-top:10px">
+        <div class="label">Next due</div>
         <input class="input" type="date" data-sub-id="${s.id}" data-sub-field="next_due" value="${s.next_due}" />
       </div>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px">
-      <span style="font-size:11.5px;color:var(--faint)">${s.skip_next ? "Next charge will be skipped" : `Due ${dueLabel}`}</span>
-      <div style="display:flex;gap:8px;flex-shrink:0">
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
         <button type="button" class="smallbtn" data-skip-sub="${s.id}" ${s.skip_next ? "disabled" : ""}>${s.skip_next ? "Skipping…" : "Skip next"}</button>
         <button type="button" class="smallbtn" style="color:var(--danger)" data-stop-sub="${s.id}">Stop</button>
       </div>
+    </div>`;
+  }
+  return html + `</div>`;
+}
+
+function stoppedSubscriptionRowHTML(s: Subscription): string {
+  const i = personIdx(s.paid_by, PEOPLE);
+  return `<div class="row">
+    <div class="rowmain" style="opacity:.55;cursor:default">
+      <span class="rowbar" style="background:var(--p${i})"></span>
+      <div class="iconc">${iconFor(s.category)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="rowdesc">${esc(s.description)} <span style="color:var(--p${i});font-weight:700;font-size:11.5px">&middot; ${esc(s.paid_by)}</span></div>
+        <div class="rowsub">${s.frequency === "monthly" ? "Monthly" : "Yearly"} &middot; ${CURRENCY}${fmt(s.amount)}</div>
+      </div>
+      <button type="button" class="smallbtn" data-resume-sub="${s.id}" style="flex:none">Resume</button>
     </div>
   </div>`;
 }
 
 function renderSubscriptionsPage(): void {
-  const active = subscriptions.filter((s) => s.active);
-  const stopped = subscriptions.filter((s) => !s.active);
+  const pending = pendingBackfillCount();
+  $("subsBanner").innerHTML = pending
+    ? `<div class="box" style="display:flex;gap:12px;align-items:flex-start;border:1.5px dashed var(--line);margin-bottom:16px">
+        <div class="iconc">${INFO_SVG}</div>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:13.5px">${pending} bill${pending === 1 ? "" : "s"} aren't auto-renewing yet</div>
+          <div class="rowsub" style="margin-top:2px">Added before auto-renew existed &mdash; enable it once and they'll stop needing manual entry.</div>
+        </div>
+        <button type="button" class="smallbtn" id="backfillSubsBtn" style="flex:none">Fix now</button>
+      </div>`
+    : "";
+  document.getElementById("backfillSubsBtn")?.addEventListener("click", () => void backfillSubscriptionsFlow());
+
+  $("subsPayerFilter").innerHTML = ["All", ...PEOPLE.map((p) => p.name)]
+    .map((name, idx) => {
+      const on = subsPayerFilter === name;
+      const cls = on ? (idx === 0 ? "on" : `on c${idx - 1}`) : "";
+      return `<button type="button" class="chip ${cls}" data-payer-filter="${esc(name)}">${esc(name)}</button>`;
+    })
+    .join("");
+
+  const visible = subsPayerFilter === "All" ? subscriptions : subscriptions.filter((s) => s.paid_by === subsPayerFilter);
+  const active = visible.filter((s) => s.active);
+  const stopped = visible.filter((s) => !s.active);
+
+  $("subsActiveCount").textContent = String(active.length);
+  $("subsActiveTotal").textContent = fmt(active.reduce((sum, s) => sum + Number(s.amount), 0));
 
   $("subsActiveList").innerHTML = active.length
-    ? active.map(subscriptionEditRow).join("")
-    : `<div class="empty">No active recurring bills.</div>`;
+    ? active.map(subscriptionRowHTML).join("")
+    : `<div class="empty">No active bills${subsPayerFilter === "All" ? "" : ` for ${esc(subsPayerFilter)}`}.</div>`;
 
-  $("subsStoppedList").innerHTML = stopped.length
-    ? stopped
-        .map(
-          (s) => `<div class="box" style="padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div>
-          <div style="font-weight:600;font-size:13.5px">${esc(s.description)} <span style="color:var(--faint);font-weight:400">(${esc(s.paid_by)})</span></div>
-          <div style="font-size:12px;color:var(--faint)">${CURRENCY}${fmt(s.amount)} · ${s.frequency === "monthly" ? "Monthly" : "Yearly"}</div>
-        </div>
-        <button type="button" class="smallbtn" data-resume-sub="${s.id}">Resume</button>
-      </div>`,
-        )
-        .join("")
-    : `<div class="empty">No stopped subscriptions.</div>`;
+  $("subsStoppedWrap").innerHTML = stopped.length
+    ? `<div class="label" style="margin-top:20px">Stopped</div><div class="listbox">${stopped.map(stoppedSubscriptionRowHTML).join("")}</div>`
+    : "";
 }
 
 function months(): string[] {

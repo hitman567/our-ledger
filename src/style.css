@@ -295,6 +295,29 @@ main {
   font-weight: 600;
   font-size: 15px;
 }
+.iconc {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.chev {
+  color: var(--faint);
+  flex: none;
+  display: flex;
+  transition: transform 0.15s;
+}
+.chev.open {
+  transform: rotate(180deg);
+}
+.detail {
+  padding: 2px 14px 16px;
+}
 .rowdetail {
   padding: 0 4px 12px 20px;
   font-size: 13px;
