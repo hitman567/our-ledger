@@ -604,6 +604,7 @@ async function backfillSubscriptionsFlow(): Promise<void> {
 /* ---------------- form ---------------- */
 function buildStaticControls(): void {
   $("curSym").textContent = CURRENCY;
+  $("myShareCur").textContent = CURRENCY;
   $<HTMLInputElement>("fDate").value = todayStr();
   $("headNames").textContent = PEOPLE.map((p) => p.name.toUpperCase()).join(" + ") + " · LEDGER";
 

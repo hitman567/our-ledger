@@ -59,6 +59,28 @@ select {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
+.shareinput {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.shareinput .cur {
+  font-family: var(--mono);
+  color: var(--faint);
+  font-size: 14px;
+}
+.shareinput input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+}
 .box {
   background: var(--card);
   border: 1px solid var(--line);
