@@ -41,6 +41,7 @@
       </div>
       <div class="sub" id="headMonth"></div>
       <div class="total" id="headTotal"></div>
+      <div class="flatnote hidden" id="headFlatnote"></div>
       <div class="splitwrap" id="headSplit"></div>
     </div>
   </header>
@@ -114,6 +115,22 @@
             <div><div class="label" id="fShare1Label"></div><input class="input" id="fShare1" inputmode="decimal" /></div>
           </div>
           <div id="splitErr" style="font-size:12.5px;color:var(--danger);margin-top:6px"></div>
+        </div>
+        <div style="margin-top:16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="toggle" id="fFlatmate" aria-pressed="false"><span></span></button>
+            <span style="font-size:14px;font-weight:600">Only part of this is mine</span>
+          </div>
+          <div id="flatmateWrap" class="hidden" style="margin-top:12px">
+            <div class="rowsub" style="margin-bottom:8px">e.g. paid the whole grocery run on your card, but only a fraction is your own.</div>
+            <div class="chiprow" id="fFlatmateFrac"></div>
+            <div style="margin-top:10px">
+              <div class="label">Your share</div>
+              <input class="input" id="fMyShare" inputmode="decimal" placeholder="0" />
+            </div>
+            <div id="mySharePreview" class="rowsub" style="margin-top:8px"></div>
+            <div id="myShareErr" style="font-size:12.5px;color:var(--danger);margin-top:6px"></div>
+          </div>
         </div>
         <div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:10px">
           <div style="display:flex;align-items:center;gap:10px">

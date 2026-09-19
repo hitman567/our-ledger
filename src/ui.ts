@@ -1,7 +1,7 @@
 import { CURRENCY, FIELD_LABELS, PEOPLE } from "./config";
 import { exportCSV } from "./csv";
 import { addInterval, cycleEndDate, dayAfter, dueDateFor, esc, fmt, monthLabel, monthOf, todayStr } from "./format";
-import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "./split";
+import { equalShares, flatmateLabel, isCustomSplitValid, isMyShareValid, personIdx, personSpend, splitLabel } from "./split";
 import {
   deleteCard as dbDeleteCard,
   deleteCategory as dbDeleteCategory,
@@ -64,6 +64,7 @@ const sel: FormSelection = {
   subFrequency: "monthly",
   split: false,
   splitMode: "no",
+  flatmate: false,
 };
 let histMonth = monthOf(todayStr());
 let histPerson = -1;
@@ -202,6 +203,7 @@ async function runSubscriptionCatchup(): Promise<void> {
           emi_months: null,
           emi_index: null,
           subscription_id: s.id,
+          my_share: null,
         };
         await dbInsertGeneratedExpense(rec);
         generatedAny = true;
@@ -254,11 +256,19 @@ function splitValid(): boolean {
   return isCustomSplitValid(amt, s0, s1);
 }
 
+function myShareValid(): boolean {
+  if (!sel.flatmate) return true;
+  const amt = parseFloat($<HTMLInputElement>("fAmount").value);
+  const share = parseFloat($<HTMLInputElement>("fMyShare").value);
+  return isMyShareValid(amt, share);
+}
+
 async function saveExpense(): Promise<void> {
   const amount = parseFloat($<HTMLInputElement>("fAmount").value);
   const description = $<HTMLInputElement>("fDesc").value.trim();
-  if (!(amount > 0) || !description || !splitValid()) return;
+  if (!(amount > 0) || !description || !splitValid() || !myShareValid()) return;
   const [share_p0, share_p1] = splitShares();
+  const my_share = sel.flatmate ? parseFloat($<HTMLInputElement>("fMyShare").value) || null : null;
   const isCard = isCardMode(sel.mode);
   const cardName = isCard ? normalizeCardName($<HTMLInputElement>("fCard").value) : "";
   if (isCard && cardName && !cards.some((c) => c.name.toLowerCase() === cardName.toLowerCase())) {
@@ -281,6 +291,7 @@ async function saveExpense(): Promise<void> {
     split: sel.split,
     share_p0: sel.split ? share_p0 : null,
     share_p1: sel.split ? share_p1 : null,
+    my_share,
   };
 
   const saveBtn = $<HTMLButtonElement>("saveBtn");
@@ -689,10 +700,35 @@ function buildStaticControls(): void {
     }),
   );
 
+  $("fFlatmateFrac").innerHTML =
+    `<button type="button" class="chip" data-frac="2">½ mine</button>` +
+    `<button type="button" class="chip" data-frac="3">⅓ mine</button>` +
+    `<button type="button" class="chip" data-frac="4">¼ mine</button>`;
+  $("fFlatmateFrac").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-frac]");
+    if (!b) return;
+    const n = Number(b.dataset["frac"]);
+    const amt = parseFloat($<HTMLInputElement>("fAmount").value) || 0;
+    if (amt > 0) $<HTMLInputElement>("fMyShare").value = (amt / n).toFixed(2);
+    validate();
+    renderMySharePreview();
+  });
+  $("fFlatmate").addEventListener("click", () => {
+    sel.flatmate = !sel.flatmate;
+    if (!sel.flatmate) $<HTMLInputElement>("fMyShare").value = "";
+    paintChips();
+    validate();
+  });
+  $("fMyShare").addEventListener("input", () => {
+    validate();
+    renderMySharePreview();
+  });
+
   ["fAmount", "fDesc"].forEach((id) =>
     $(id).addEventListener("input", () => {
       validate();
       renderSplitPreview();
+      renderMySharePreview();
     }),
   );
   $("saveBtn").addEventListener("click", () => void saveExpense());
@@ -870,6 +906,10 @@ function paintChips(): void {
     .forEach((b) => b.classList.toggle("on", b.dataset["split"] === sel.splitMode));
   $("customSplitWrap").classList.toggle("hidden", sel.splitMode !== "custom");
   renderSplitPreview();
+  $("fFlatmate").classList.toggle("on", sel.flatmate);
+  $("fFlatmate").setAttribute("aria-pressed", String(sel.flatmate));
+  $("flatmateWrap").classList.toggle("hidden", !sel.flatmate);
+  renderMySharePreview();
 }
 
 function renderSplitPreview(): void {
@@ -887,6 +927,23 @@ function renderSplitPreview(): void {
       : "";
 }
 
+function renderMySharePreview(): void {
+  const amt = parseFloat($<HTMLInputElement>("fAmount").value) || 0;
+  const share = parseFloat($<HTMLInputElement>("fMyShare").value) || 0;
+  const preview = $("mySharePreview");
+  if (sel.flatmate && amt > 0 && share > 0) {
+    const theirs = amt - share;
+    preview.textContent =
+      `Your share ${CURRENCY}${fmt(share)}` + (theirs > 0.004 ? ` · Flatmates ${CURRENCY}${fmt(theirs)}` : "");
+  } else {
+    preview.textContent = "";
+  }
+  $("myShareErr").textContent =
+    sel.flatmate && $<HTMLInputElement>("fMyShare").value && !myShareValid()
+      ? "Your share must be more than 0 and no more than the total amount."
+      : "";
+}
+
 function emiValid(): boolean {
   if (!sel.recurring || !sel.emi) return true;
   return parseInt($<HTMLInputElement>("fEmiMonths").value, 10) > 0;
@@ -897,6 +954,7 @@ function validate(): void {
     parseFloat($<HTMLInputElement>("fAmount").value) > 0 &&
     $<HTMLInputElement>("fDesc").value.trim() &&
     splitValid() &&
+    myShareValid() &&
     emiValid()
   );
 }
@@ -909,6 +967,7 @@ function resetForm(): void {
   $<HTMLInputElement>("fCard").value = "";
   $<HTMLInputElement>("fShare0").value = "";
   $<HTMLInputElement>("fShare1").value = "";
+  $<HTMLInputElement>("fMyShare").value = "";
   $<HTMLInputElement>("fEmiMonths").value = "";
   $<HTMLInputElement>("fDate").value = todayStr();
   $<HTMLSelectElement>("fCat").value = categories[0]?.name ?? "";
@@ -918,6 +977,7 @@ function resetForm(): void {
   sel.subFrequency = "monthly";
   sel.split = false;
   sel.splitMode = "no";
+  sel.flatmate = false;
   const saveBtn = $<HTMLButtonElement>("saveBtn");
   saveBtn.textContent = "Add expense";
   saveBtn.disabled = true;
@@ -951,6 +1011,8 @@ function startEdit(id: string): void {
     $<HTMLInputElement>("fShare0").value = "";
     $<HTMLInputElement>("fShare1").value = "";
   }
+  sel.flatmate = x.my_share != null;
+  $<HTMLInputElement>("fMyShare").value = x.my_share != null ? String(x.my_share) : "";
   $<HTMLInputElement>("fCard").value = x.card || "";
   $<HTMLInputElement>("fNote").value = x.note || "";
   const saveBtn = $<HTMLButtonElement>("saveBtn");
@@ -1223,7 +1285,7 @@ function rowHTML(x: Expense): string {
     <div class="rowmain" data-row="${x.id}">
       <span class="rowbar" style="background:var(--p${i})"></span>
       <div style="flex:1;min-width:0">
-        <div class="rowdesc">${esc(x.description)} ${x.emi ? "🏷️" : x.recurring ? "🔁" : ""} ${x.split ? "⇄" : ""}</div>
+        <div class="rowdesc">${esc(x.description)} ${x.emi ? "🏷️" : x.recurring ? "🔁" : ""} ${x.split ? "⇄" : ""} ${x.my_share != null ? "🏠" : ""}</div>
         <div class="rowsub">${d} · ${esc(x.category)} · ${esc(x.paid_by)}</div>
       </div>
       <div class="rowamt">${CURRENCY}${fmt(x.amount)}</div>
@@ -1233,6 +1295,7 @@ function rowHTML(x: Expense): string {
         ? `<div class="rowdetail">
         <span>${esc(x.mode)}${x.card ? " · " + esc(x.card) : ""}</span>
         ${x.split ? `<span>${splitLabel(x, PEOPLE, CURRENCY)}</span>` : ""}
+        ${x.my_share != null ? `<span>${flatmateLabel(x, CURRENCY)}</span>` : ""}
         ${x.emi ? `<span>EMI${x.emi_index && x.emi_months ? ` · ${x.emi_index}/${x.emi_months}` : x.emi_months ? ` · ${x.emi_months} months` : ""}</span>` : ""}
         ${x.note ? `<span>"${esc(x.note)}"</span>` : ""}
         <span style="flex:1"></span>
@@ -1250,6 +1313,11 @@ function fillMonthSelect(el: HTMLSelectElement, val: string): void {
     .join("");
 }
 
+/** How much of a set of rows' card total was actually flatmates'/others', not the payer's own. */
+function flatmatePortion(rows: readonly Expense[]): number {
+  return rows.reduce((s, x) => s + (x.my_share != null ? Number(x.amount) - Number(x.my_share) : 0), 0);
+}
+
 function renderHeader(): void {
   const tm = monthOf(todayStr());
   const rows = expenses.filter((x) => monthOf(x.date) === tm);
@@ -1257,8 +1325,11 @@ function renderHeader(): void {
   const byP: [number, number] = [0, 1].map((i) =>
     rows.reduce((s, x) => s + personSpend(x, i as 0 | 1, PEOPLE), 0),
   ) as [number, number];
+  const flatmates = flatmatePortion(rows);
   $("headMonth").textContent = monthLabel(tm) + " so far";
   $("headTotal").textContent = CURRENCY + fmt(total);
+  $("headFlatnote").textContent = flatmates > 0.004 ? `of which ${CURRENCY}${fmt(flatmates)} is flatmates', not yours` : "";
+  $("headFlatnote").classList.toggle("hidden", !(flatmates > 0.004));
   $("headSplit").innerHTML = splitBarHTML(byP);
 }
 
@@ -1389,10 +1460,12 @@ function renderInsights(): void {
   }
   const maxT = Math.max(1, ...trend.map((t) => t[1]));
 
+  const flatmates = flatmatePortion(rows);
   $("insBody").innerHTML = `
     <div class="box">
       <div class="label">Total spent · ${monthLabel(insMonth)}</div>
-      <div class="mono" style="font-size:34px;font-weight:700;margin-bottom:16px">${CURRENCY}${fmt(total)}</div>
+      <div class="mono" style="font-size:34px;font-weight:700;margin-bottom:4px">${CURRENCY}${fmt(total)}</div>
+      ${flatmates > 0.004 ? `<div class="rowsub" style="margin-bottom:12px">of which ${CURRENCY}${fmt(flatmates)} is flatmates', not yours</div>` : `<div style="margin-bottom:16px"></div>`}
       ${splitBarHTML(byP)}
     </div>
     <div class="box">
@@ -1492,7 +1565,7 @@ function renderAudit(): void {
           let ov: unknown = o[f];
           let nv: unknown = n[f];
           if (String(ov ?? "") !== String(nv ?? "")) {
-            if (f === "amount" || f === "share_p0" || f === "share_p1") {
+            if (f === "amount" || f === "share_p0" || f === "share_p1" || f === "my_share") {
               ov = ov == null ? ov : CURRENCY + fmt(ov as number);
               nv = nv == null ? nv : CURRENCY + fmt(nv as number);
             }

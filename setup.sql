@@ -25,6 +25,11 @@ alter table expenses add column if not exists share_p1 numeric;
 alter table expenses add column if not exists emi boolean not null default false;
 alter table expenses add column if not exists emi_months integer;
 
+-- How much of the amount is actually the account holder's own cost, when
+-- the rest was fronted for flatmates/others not tracked as a person in
+-- this ledger. Independent of `split` above (added later; safe to re-run).
+alter table expenses add column if not exists my_share numeric check (my_share is null or my_share > 0);
+
 alter table expenses enable row level security;
 
 drop policy if exists "authenticated users full access" on expenses;

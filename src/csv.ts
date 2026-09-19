@@ -2,7 +2,7 @@ import { PEOPLE } from "./config";
 import type { Expense } from "./types";
 
 export function exportCSV(expenses: readonly Expense[]): void {
-  const head = `date,description,amount,category,paid_by,mode,card,recurring,note,split,${PEOPLE[0].name}_share,${PEOPLE[1].name}_share`;
+  const head = `date,description,amount,category,paid_by,mode,card,recurring,note,split,${PEOPLE[0].name}_share,${PEOPLE[1].name}_share,my_share`;
   const rows = [...expenses]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((x) =>
@@ -19,6 +19,7 @@ export function exportCSV(expenses: readonly Expense[]): void {
         x.split ? "yes" : "no",
         x.share_p0 ?? "",
         x.share_p1 ?? "",
+        x.my_share ?? "",
       ]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
         .join(","),

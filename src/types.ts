@@ -28,6 +28,14 @@ export interface Expense {
   emi_index: number | null;
   /** The subscription rule that auto-generated this row, if any. */
   subscription_id: string | null;
+  /**
+   * How much of `amount` is actually the account holder's own cost, when
+   * the rest was fronted for flatmates/others who aren't tracked as a
+   * person in this ledger. Null means the whole amount is theirs, as
+   * before. Independent of `split`, which divides an expense between the
+   * two people in this ledger.
+   */
+  my_share: number | null;
 }
 
 /** Fields the app writes when creating or editing an expense. */
@@ -108,4 +116,6 @@ export interface FormSelection {
   subFrequency: SubscriptionFrequency;
   split: boolean;
   splitMode: SplitMode;
+  /** Whether part of this expense's cost belongs to flatmates/others. */
+  flatmate: boolean;
 }

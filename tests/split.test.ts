@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { equalShares, isCustomSplitValid, personIdx, personSpend, splitLabel } from "../src/split";
+import {
+  equalShares,
+  flatmateLabel,
+  isCustomSplitValid,
+  isMyShareValid,
+  myCost,
+  personIdx,
+  personSpend,
+  splitLabel,
+} from "../src/split";
 import type { Expense, Person } from "../src/types";
 
 const PEOPLE: [Person, Person] = [
@@ -28,6 +37,7 @@ function expense(overrides: Partial<Expense>): Expense {
     emi_months: null,
     emi_index: null,
     subscription_id: null,
+    my_share: null,
     ...overrides,
   };
 }
@@ -77,6 +87,51 @@ describe("personSpend", () => {
     const x = expense({ amount: 100, paid_by: "Archie", split: true, share_p0: 70, share_p1: 30 });
     expect(personSpend(x, 0, PEOPLE)).toBe(70);
     expect(personSpend(x, 1, PEOPLE)).toBe(30);
+  });
+
+  it("attributes only the payer's own share when a flatmate share is set", () => {
+    // Ayush pays 300 for groceries shared with flatmates; only 100 is his.
+    const x = expense({ amount: 300, paid_by: "Ayush", split: false, my_share: 100 });
+    expect(personSpend(x, 0, PEOPLE)).toBe(100);
+    expect(personSpend(x, 1, PEOPLE)).toBe(0);
+  });
+});
+
+describe("myCost", () => {
+  it("falls back to the full amount when no flatmate share is set", () => {
+    expect(myCost(expense({ amount: 300, my_share: null }))).toBe(300);
+  });
+  it("uses the flatmate share when set", () => {
+    expect(myCost(expense({ amount: 300, my_share: 100 }))).toBe(100);
+  });
+});
+
+describe("isMyShareValid", () => {
+  it("accepts a share that's a real slice of the total", () => {
+    expect(isMyShareValid(300, 100)).toBe(true);
+  });
+  it("rejects a non-positive amount or share, or a share over the total", () => {
+    expect(isMyShareValid(0, 100)).toBe(false);
+    expect(isMyShareValid(300, 0)).toBe(false);
+    expect(isMyShareValid(300, -50)).toBe(false);
+    expect(isMyShareValid(300, 400)).toBe(false);
+  });
+  it("accepts a share equal to the full amount", () => {
+    expect(isMyShareValid(300, 300)).toBe(true);
+  });
+});
+
+describe("flatmateLabel", () => {
+  it("is blank when no flatmate share is set", () => {
+    expect(flatmateLabel(expense({ my_share: null }), "₹")).toBe("");
+  });
+  it("shows the card total, your share, and the flatmates' portion", () => {
+    const x = expense({ amount: 300, my_share: 100 });
+    expect(flatmateLabel(x, "₹")).toBe("Card total ₹300 · Your share ₹100 · Flatmates ₹200");
+  });
+  it("omits the flatmates' portion when the share covers the whole amount", () => {
+    const x = expense({ amount: 300, my_share: 300 });
+    expect(flatmateLabel(x, "₹")).toBe("Card total ₹300 · Your share ₹300");
   });
 });
 
