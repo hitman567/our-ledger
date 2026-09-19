@@ -1334,8 +1334,13 @@ function renderHeader(): void {
 }
 
 function renderLists(): void {
+  // Exclude EMI/subscription installments dated after today — they're
+  // scheduled, not "recent", and would otherwise crowd out what actually
+  // happened since they're generated with future dates up front.
+  const today = todayStr();
   $("recentList").innerHTML =
     expenses
+      .filter((x) => x.date <= today)
       .slice(0, 6)
       .map(rowHTML)
       .join("") || `<div class="empty">No expenses yet. Add your first one above.</div>`;
